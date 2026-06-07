@@ -89,8 +89,10 @@ Get free PDFs from IDX:
 - [x] **Agent nodes** — financial / document / news worker agents, deterministic supervisor
 - [x] **Risk Analyst synthesis node** — rule-based scorer + LLM structured output → `RiskReport`
       with Pydantic validation and graceful LLM-failure fallback (**40 unit tests green**)
+- [x] **Gradio UI** — streaming progress, 4-tab report layout (summary / ratios / flags / sources),
+      PDF upload, Enter-to-submit (`app/gradio_app.py` + `app.py` HF Spaces entrypoint)
 - [ ] LangSmith tracing + agent evaluation harness
-- [ ] Gradio UI + Hugging Face Spaces deployment
+- [ ] Hugging Face Spaces deployment
 
 ---
 
