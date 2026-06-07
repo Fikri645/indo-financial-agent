@@ -44,6 +44,10 @@ TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
 # Multilingual model covers Bahasa Indonesia financial text well. Swap for the
 # Netmonk-fine-tuned IBM Granite embedding if you want to showcase that.
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "intfloat/multilingual-e5-large")
+# Multilingual cross-encoder reranker (handles Bahasa Indonesia). Reorders the
+# hybrid-fused candidates by true query-document relevance before the LLM sees them.
+RERANKER_MODEL = os.getenv("RERANKER_MODEL", "BAAI/bge-reranker-v2-m3")
+RERANK_ENABLED = os.getenv("RERANK_ENABLED", "true").lower() == "true"
 CHUNK_SIZE = 1000
 CHUNK_OVERLAP = 150
 RETRIEVAL_TOP_K = 6          # final chunks fed to the LLM

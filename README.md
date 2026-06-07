@@ -56,7 +56,7 @@ Give it a ticker (e.g. `BBRI`) and it will:
 | LLM | Free-tier: **Groq** (Llama 3.3 70B) / **Gemini 2.0 Flash** / **OpenRouter** |
 | Structured data | **yfinance** (IDX `.JK`) |
 | PDF parsing | **Docling** (TableFormer, 97.9% table accuracy) |
-| Retrieval | **ChromaDB** + multilingual-e5 embeddings + BM25 hybrid (RRF) |
+| Retrieval | **ChromaDB** + multilingual-e5 + BM25 hybrid (RRF) → **BGE cross-encoder rerank** |
 | Output contract | **Pydantic** schemas |
 | UI | **Gradio** on Hugging Face Spaces |
 

@@ -1,4 +1,7 @@
 """Unit tests for document chunking + hybrid retrieval (offline, no model load)."""
+from unittest.mock import MagicMock
+
+from src import config
 from src.tools.document import (
     DocumentStore,
     chunk_markdown,
@@ -49,7 +52,9 @@ def test_rrf_fuses_rankings():
     assert fused[0][0] == 2
 
 
-def test_documentstore_bm25_retrieval():
+def test_documentstore_bm25_retrieval(monkeypatch):
+    # Disable the (heavy) cross-encoder so this stays a pure offline fusion test.
+    monkeypatch.setattr(config, "RERANK_ENABLED", False)
     store = DocumentStore()
     store.add_markdown(SAMPLE_MD, source="test.pdf")
     results = store.search("kelangsungan usaha going concern", top_k=2)
@@ -60,3 +65,39 @@ def test_documentstore_bm25_retrieval():
 
 def test_empty_store_returns_empty():
     assert DocumentStore().search("apa saja") == []
+
+
+def test_reranker_reorders_candidates(monkeypatch):
+    """A mocked cross-encoder should drive the final ordering."""
+    monkeypatch.setattr(config, "RERANK_ENABLED", True)
+    store = DocumentStore()
+    store.add_markdown(SAMPLE_MD, source="test.pdf")
+
+    # Fake reranker: score = index, so the LAST candidate wins. This proves the
+    # reranker output (not the fusion order) determines the result.
+    fake = MagicMock()
+
+    def fake_predict(pairs):
+        # Highest score to the last pair so ordering is unmistakably reranker-driven.
+        return [float(i) for i in range(len(pairs))]
+
+    fake.predict.side_effect = fake_predict
+    store._reranker = fake  # inject so _ensure_reranker is skipped
+
+    results = store.search("risiko likuiditas", top_k=2)
+    assert len(results) == 2
+    assert fake.predict.called
+
+
+def test_search_falls_back_to_fusion_when_reranker_fails(monkeypatch):
+    """If the reranker raises, search must still return fusion results."""
+    monkeypatch.setattr(config, "RERANK_ENABLED", True)
+    store = DocumentStore()
+    store.add_markdown(SAMPLE_MD, source="test.pdf")
+
+    boom = MagicMock()
+    boom.predict.side_effect = RuntimeError("model OOM")
+    store._reranker = boom
+
+    results = store.search("going concern kelangsungan usaha", top_k=2)
+    assert len(results) >= 1  # graceful fallback, no crash

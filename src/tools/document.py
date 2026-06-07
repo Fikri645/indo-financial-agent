@@ -107,6 +107,7 @@ class DocumentStore:
         self._vectorstore = None
         self._bm25 = None
         self._tokenized: list[list[str]] = []
+        self._reranker = None  # lazy-loaded cross-encoder
 
     # -- ingest -------------------------------------------------------------- #
     def add_pdf(self, pdf_path: str | Path) -> int:
@@ -151,7 +152,13 @@ class DocumentStore:
 
     # -- retrieve ------------------------------------------------------------ #
     def search(self, query: str, top_k: int = config.RETRIEVAL_TOP_K) -> list[DocChunk]:
-        """Hybrid search: fuse dense + BM25 rankings via Reciprocal Rank Fusion."""
+        """Hybrid retrieve → fuse (RRF) → cross-encoder rerank → top_k.
+
+        1. Recall a wide candidate pool with BM25 + dense embeddings.
+        2. Fuse the two rankings with Reciprocal Rank Fusion (cheap, robust).
+        3. Rerank the fused candidates with a multilingual cross-encoder, which
+           scores true query-document relevance far better than fusion alone.
+        """
         if not self._chunks:
             return []
 
@@ -161,8 +168,40 @@ class DocumentStore:
         dense_order = self._dense_rank(query)
 
         fused = _reciprocal_rank_fusion([bm25_order, dense_order])
-        top_idx = [i for i, _ in fused[:top_k]]
-        return [self._chunks[i] for i in top_idx]
+        # Take a wider candidate pool, then let the reranker pick the final top_k.
+        candidate_idx = [i for i, _ in fused[: config.RETRIEVAL_CANDIDATES]]
+
+        reranked = self._rerank(query, candidate_idx, top_k)
+        if reranked is not None:
+            return reranked
+        # Reranker unavailable → fall back to fusion order.
+        return [self._chunks[i] for i in candidate_idx[:top_k]]
+
+    def _rerank(
+        self, query: str, candidate_idx: list[int], top_k: int
+    ) -> Optional[list[DocChunk]]:
+        """Cross-encoder rerank. Returns None if the reranker can't be loaded."""
+        if not config.RERANK_ENABLED or not candidate_idx:
+            return None
+        try:
+            self._ensure_reranker()
+            if self._reranker is None:
+                return None
+            pairs = [[query, self._chunks[i].text] for i in candidate_idx]
+            scores = self._reranker.predict(pairs)
+            ranked = sorted(
+                zip(candidate_idx, scores), key=lambda x: x[1], reverse=True
+            )
+            return [self._chunks[i] for i, _ in ranked[:top_k]]
+        except Exception:  # pragma: no cover - model/network dependent
+            return None
+
+    def _ensure_reranker(self) -> None:
+        if self._reranker is not None:
+            return
+        from sentence_transformers import CrossEncoder
+
+        self._reranker = CrossEncoder(config.RERANKER_MODEL)
 
     def _bm25_rank(self, query: str) -> list[int]:
         if self._bm25 is None:
