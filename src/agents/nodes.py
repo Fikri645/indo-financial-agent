@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import logging
+from typing import Optional
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
@@ -272,6 +273,9 @@ Panduan:
 - sources: sebutkan semua sumber yang digunakan (yfinance, news_search, \
 financial_report_pdf).
 - key_ratios: salin dari data fundamental yang tersedia.
+
+PENTING: nilai enum HARUS huruf kecil — overall_risk dan severity hanya boleh \
+salah satu dari: low, moderate, high, severe.
 """
 
 
@@ -343,17 +347,14 @@ def risk_analyst_node(state: AgentState) -> dict:
 
     # ---- 3. LLM → structured RiskReport -------------------------------------
     llm = get_llm(temperature=0.1)
-    structured_llm = llm.with_structured_output(RiskReport)
-
     messages = [
         SystemMessage(content=_ANALYST_SYSTEM.format(ticker=ticker)),
         HumanMessage(content=full_context),
     ]
 
-    try:
-        report: RiskReport = structured_llm.invoke(messages)
-    except Exception as exc:
-        logger.error("LLM structured output failed (%s) — using rule-based fallback", exc)
+    report = _structured_report(llm, messages)
+    if report is None:
+        logger.error("All structured-output attempts failed — using rule-based fallback")
         report = _fallback_report(ticker, fin_data, flags, quant_risk, news, doc_chunks)
 
     return {
@@ -367,6 +368,30 @@ def risk_analyst_node(state: AgentState) -> dict:
             name="risk_analyst",
         )],
     }
+
+
+def _structured_report(llm, messages) -> Optional[RiskReport]:
+    """Get a RiskReport via structured output, robust to LLM enum-case quirks.
+
+    Strategy:
+      1. ``function_calling`` (default) — best-structured, but Groq validates the
+         enum case server-side and rejects 'LOW' vs 'low'.
+      2. ``json_mode`` — parsing happens client-side via Pydantic, where
+         RiskLevel._missing_ coerces case. Catches the common Groq failure.
+
+    Returns None if both attempts fail (caller uses the rule-based fallback).
+    """
+    for method in ("function_calling", "json_mode"):
+        try:
+            structured = llm.with_structured_output(RiskReport, method=method)
+            report = structured.invoke(messages)
+            if isinstance(report, RiskReport):
+                return report
+            # json_mode may return a dict
+            return RiskReport.model_validate(report)
+        except Exception as exc:
+            logger.warning("structured output via %s failed: %s", method, exc)
+    return None
 
 
 # ============================================================================ #

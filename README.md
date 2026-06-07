@@ -91,8 +91,14 @@ Get free PDFs from IDX:
       with Pydantic validation and graceful LLM-failure fallback (**40 unit tests green**)
 - [x] **Gradio UI** — streaming progress, 4-tab report layout (summary / ratios / flags / sources),
       PDF upload, Enter-to-submit (`app/gradio_app.py` + `app.py` HF Spaces entrypoint)
+- [x] **Tool-calling News Agent** — genuine ReAct agent (`create_react_agent`): the LLM
+      composes its own queries, calls the search tool repeatedly, refines on empty results,
+      then synthesises headlines + sentiment (deterministic fallback if the agent path fails)
 - [x] **LangSmith tracing** — automatic via `LANGCHAIN_TRACING_V2=true` + `LANGCHAIN_API_KEY`
       (LangGraph traces every run; no code changes required)
+- [x] **Eval harness** — deterministic scorers (schema, risk-consistency, flag-grounding,
+      sector-correctness) + **LLM-as-judge** groundedness, run over a labelled IDX dataset
+      with an aggregate scorecard (`python -m eval.run_eval`)
 - [x] **Hugging Face Spaces** — live at [fikri0o0/indo-financial-agent](https://huggingface.co/spaces/fikri0o0/indo-financial-agent)
 
 ---
@@ -106,10 +112,35 @@ Get free PDFs from IDX:
 
 ---
 
+## 📏 Evaluation
+
+The agent is graded, not just demoed. `eval/` runs the full graph over a labelled
+slice of IDX tickers and scores each report:
+
+| Evaluator | Checks |
+|---|---|
+| `schema_valid` | output is a well-formed `RiskReport` |
+| `risk_consistency` | `overall_risk` matches the flag-implied severity |
+| `flags_grounded` | every flag cites a real ratio / number |
+| `sources_present` | the quantitative source is credited |
+| `summary_quality` | substantive narrative in Bahasa Indonesia |
+| `sector_correct` | banks classified `financial`, not mis-flagged for DER |
+| `groundedness_llm` | **LLM-as-judge**: is the summary supported by the data? |
+
+```bash
+python -m eval.run_eval              # full scorecard (live graph + LLM judge)
+python -m eval.run_eval --no-judge   # deterministic checks only
+python -m eval.run_eval --limit 2    # quick smoke
+```
+
+> The harness paid for itself immediately: it caught a Groq enum-case bug that
+> silently dropped bank reports to the rule-based fallback (`summary_quality`
+> 0.33 → 1.00 after the fix).
+
 ## 🧪 Development
 
 ```bash
-make test     # pytest (offline; no network/model required)
+make test     # pytest (offline; no network/model required) — 72 tests
 make lint     # flake8
 ```
 

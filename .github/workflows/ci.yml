@@ -21,11 +21,13 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           # Lightweight deps only — the offline test suite doesn't need the heavy
-          # ML stack (docling, sentence-transformers, chromadb).
-          pip install pydantic pandas numpy rank-bm25 python-dotenv pytest flake8
+          # ML stack (docling, sentence-transformers, chromadb). langchain-core is
+          # pure-python and needed by the eval-harness tests.
+          pip install pydantic pandas numpy rank-bm25 python-dotenv pytest flake8 \
+                      langchain-core
 
       - name: Lint
-        run: flake8 src/ tests/ scripts/
+        run: flake8 src/ tests/ scripts/ eval/
 
       - name: Run tests
         run: python -m pytest tests/ -v

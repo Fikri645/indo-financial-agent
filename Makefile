@@ -1,4 +1,4 @@
-.PHONY: help install fetch ingest agent app test lint clean
+.PHONY: help install fetch ingest agent app eval test lint clean
 
 PY ?= python
 
@@ -9,6 +9,7 @@ help:
 	@echo "  ingest    parse a financial-report PDF (PDF=path/to.pdf)"
 	@echo "  agent     run the full LangGraph agent on a ticker (TICKER=BBRI)"
 	@echo "  app       launch the Gradio UI"
+	@echo "  eval      run the evaluation harness + scorecard"
 	@echo "  test      run unit tests"
 	@echo "  lint      flake8"
 	@echo "  clean     remove caches"
@@ -29,6 +30,9 @@ agent:
 
 app:
 	$(PY) app/gradio_app.py
+
+eval:
+	$(PY) -m eval.run_eval
 
 test:
 	$(PY) -m pytest tests/ -v

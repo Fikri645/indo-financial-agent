@@ -17,6 +17,16 @@ class RiskLevel(str, Enum):
     HIGH = "high"
     SEVERE = "severe"
 
+    @classmethod
+    def _missing_(cls, value):
+        """Case-insensitive coercion — LLMs often emit 'LOW'/'High' etc."""
+        if isinstance(value, str):
+            v = value.strip().lower()
+            for member in cls:
+                if member.value == v:
+                    return member
+        return None
+
 
 class FinancialRatios(BaseModel):
     """Computed from the income statement + balance sheet (latest period)."""
