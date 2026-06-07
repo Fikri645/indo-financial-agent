@@ -86,8 +86,9 @@ Get free PDFs from IDX:
 
 - [x] **Data layer** — yfinance fundamentals + ratio engine + Docling PDF parsing +
       hybrid retrieval + rule-based risk scorer (**20 unit tests green**)
-- [ ] Agent nodes (financial / document / news worker agents)
-- [ ] Supervisor graph + Risk Analyst synthesis node
+- [x] **Agent nodes** — financial / document / news worker agents, deterministic supervisor
+- [x] **Risk Analyst synthesis node** — rule-based scorer + LLM structured output → `RiskReport`
+      with Pydantic validation and graceful LLM-failure fallback (**40 unit tests green**)
 - [ ] LangSmith tracing + agent evaluation harness
 - [ ] Gradio UI + Hugging Face Spaces deployment
 
