@@ -55,6 +55,15 @@ def fetch_news(company: str, max_results: int = 6, ticker: str = "") -> list[New
     parts.append("saham kinerja keuangan")
     query = " ".join(parts)
 
+    return search_news(query, max_results)
+
+
+def search_news(query: str, max_results: int = 6) -> list[NewsItem]:
+    """Run a news search for a caller-crafted ``query`` verbatim.
+
+    Used by the tool-calling News Agent, which composes its own queries (so we do
+    NOT append boilerplate here). Routes Tavily → DuckDuckGo like ``fetch_news``.
+    """
     if config.TAVILY_API_KEY:
         items = _tavily_search(query, max_results)
         if items:

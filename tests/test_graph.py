@@ -212,30 +212,49 @@ class TestNewsNode:
             NewsItem(title="Dividen BBRI", snippet="Dividen interim diumumkan", url="http://b.com"),
         ]
 
-    def test_success_populates_headlines(self):
-        items = self._make_news_items()
-        with patch("src.tools.news.fetch_news", return_value=items):
+    def _fake_agent(self, synthesis: str, n_tool_calls: int = 1):
+        """A fake ReAct agent whose invoke() returns a synthesised final message."""
+        from langchain_core.messages import AIMessage as _AI, ToolMessage as _Tool
+        msgs = [_Tool(content="tool result", tool_call_id="t1") for _ in range(n_tool_calls)]
+        msgs.append(_AI(content=synthesis))
+        agent = MagicMock()
+        agent.invoke.return_value = {"messages": msgs}
+        return agent
+
+    def test_agent_path_populates_synthesis(self):
+        fake_agent = self._fake_agent("Sentimen positif: BBRI laba naik 15%.", n_tool_calls=2)
+        with (
+            patch("langgraph.prebuilt.create_react_agent", return_value=fake_agent),
+            patch("src.agents.llm.get_llm", return_value=MagicMock()),
+        ):
             result = news_node(_base_state())
 
-        assert len(result["news_headlines"]) == 2
-        assert "BBRI Catat Laba Besar" in result["news_headlines"][0]
+        assert len(result["news_headlines"]) == 1
+        assert "BBRI laba naik" in result["news_headlines"][0]
         assert result["messages"][0].name == "news_agent"
 
-    def test_failure_returns_empty_headlines(self):
-        with patch("src.tools.news.fetch_news", side_effect=RuntimeError("timeout")):
+    def test_falls_back_to_deterministic_when_agent_fails(self):
+        items = self._make_news_items()
+        with (
+            patch("langgraph.prebuilt.create_react_agent", side_effect=RuntimeError("no key")),
+            patch("src.tools.news.fetch_news", return_value=items) as mock_fetch,
+        ):
+            result = news_node(_base_state(financials=_fake_financials().model_dump()))
+
+        # Fallback path used fetch_news with the company name
+        assert len(result["news_headlines"]) == 2
+        assert "BBRI Catat Laba Besar" in result["news_headlines"][0]
+        assert "Bank Rakyat Indonesia" in mock_fetch.call_args[0][0]
+
+    def test_total_failure_returns_empty(self):
+        with (
+            patch("langgraph.prebuilt.create_react_agent", side_effect=RuntimeError("no key")),
+            patch("src.tools.news.fetch_news", side_effect=RuntimeError("timeout")),
+        ):
             result = news_node(_base_state())
 
         assert result["news_headlines"] == []
         assert "Gagal" in result["messages"][0].content
-
-    def test_uses_company_name_when_financials_available(self):
-        fin = _fake_financials().model_dump()
-        items = self._make_news_items()
-        with patch("src.tools.news.fetch_news", return_value=items) as mock_fetch:
-            news_node(_base_state(financials=fin))
-        # fetch_news should be called with the company name, not just ticker
-        call_args = mock_fetch.call_args[0][0]
-        assert "Bank Rakyat Indonesia" in call_args
 
 
 # ============================================================================ #
@@ -353,9 +372,17 @@ class TestFullGraph:
         mock_llm = MagicMock()
         mock_llm.with_structured_output.return_value.invoke.return_value = fake_report
 
+        # Fake news ReAct agent → returns a synthesis message
+        from langchain_core.messages import AIMessage as _AI
+        fake_news_agent = MagicMock()
+        fake_news_agent.invoke.return_value = {
+            "messages": [_AI(content="Sentimen netral untuk BBRI.")]
+        }
+
         with (
             patch("src.tools.financial_data.fetch_financials", return_value=fake_fin),
             patch("src.tools.news.fetch_news", return_value=fake_news),
+            patch("langgraph.prebuilt.create_react_agent", return_value=fake_news_agent),
             patch("src.agents.llm.get_llm", return_value=mock_llm),
         ):
             initial = {

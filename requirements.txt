@@ -23,8 +23,9 @@ langchain-chroma>=0.1.4
 sentence-transformers>=3.0.0     # multilingual-e5 embeddings
 rank-bm25>=0.2.2                 # hybrid (sparse) retrieval
 
-# --- News / web search (free, no key) ---
-ddgs>=6.0.0
+# --- News / web search ---
+ddgs>=6.0.0                      # free, no key (fallback)
+tavily-python>=0.5.0            # reliable news when TAVILY_API_KEY is set
 
 # --- Output validation ---
 pydantic>=2.0.0

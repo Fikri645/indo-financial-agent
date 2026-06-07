@@ -179,23 +179,76 @@ def document_node(state: AgentState) -> dict:
 # News worker
 # ============================================================================ #
 
-def news_node(state: AgentState) -> dict:
-    """Fetch recent Indonesian financial news for the company."""
-    from src.tools.news import fetch_news
+_NEWS_AGENT_PROMPT = """\
+Kamu adalah analis berita keuangan. Tugasmu: temukan berita TERBARU dan relevan \
+tentang sebuah perusahaan IDX menggunakan tool `search_financial_news`.
 
+Strategi:
+- Lakukan 1-3 pencarian. Mulai dengan kode saham atau nama pendek perusahaan.
+- Jika hasil kosong/terlalu sedikit, COBA query lain (lebih umum atau sinonim).
+- Setelah cukup, rangkum 3-5 temuan utama + sentimen pasar (positif/negatif/netral) \
+dalam Bahasa Indonesia. Sertakan judul berita aslinya.
+"""
+
+
+def news_node(state: AgentState) -> dict:
+    """Tool-calling News Agent.
+
+    A genuine ReAct agent: the LLM composes its own search queries, calls the
+    ``search_financial_news`` tool (possibly multiple times, refining queries on
+    empty results), then synthesises headlines + sentiment. Falls back to a
+    single deterministic search if the agent path fails (no LLM key, tool-calling
+    unsupported, etc.) so the pipeline never breaks.
+    """
     ticker = state["ticker"]
     fin = state.get("financials")
     company = (fin.get("company_name") or ticker) if fin else ticker
-    logger.info("news_node: searching news for %s", company)
+    logger.info("news_node: tool-calling agent researching %s", company)
 
     try:
-        items = fetch_news(company, max_results=6, ticker=ticker)
-        headlines = [f"{it.title} — {it.snippet[:200]}" for it in items]
-        summary = f"Ditemukan {len(headlines)} berita terbaru untuk {company}."
+        from langgraph.prebuilt import create_react_agent
+
+        from src.agents.llm import get_llm
+        from src.agents.tools import search_financial_news
+
+        agent = create_react_agent(get_llm(temperature=0.2), [search_financial_news])
+        task = (
+            f"Cari berita keuangan terbaru tentang {company} "
+            f"(kode saham BEI: {ticker.replace('.JK', '')})."
+        )
+        result = agent.invoke(
+            {"messages": [
+                SystemMessage(content=_NEWS_AGENT_PROMPT),
+                HumanMessage(content=task),
+            ]},
+            {"recursion_limit": 8},
+        )
+        synthesis = result["messages"][-1].content.strip()
+        tool_calls = sum(
+            1 for m in result["messages"]
+            if getattr(m, "type", "") == "tool"
+        )
+        if synthesis:
+            headlines = [synthesis]
+            summary = (
+                f"News Agent menyelesaikan riset {company} "
+                f"({tool_calls} pencarian dilakukan)."
+            )
+        else:
+            raise ValueError("Agent returned empty synthesis")
+
     except Exception as exc:
-        logger.warning("news_node error: %s", exc)
-        headlines = []
-        summary = f"Gagal mengambil berita untuk {company}: {exc}"
+        logger.warning("news_node agent path failed (%s) — deterministic fallback", exc)
+        from src.tools.news import fetch_news
+
+        try:
+            items = fetch_news(company, max_results=6, ticker=ticker)
+            headlines = [f"{it.title} — {it.snippet[:200]}" for it in items]
+            summary = f"Ditemukan {len(headlines)} berita (mode fallback) untuk {company}."
+        except Exception as exc2:
+            logger.warning("news_node fallback also failed: %s", exc2)
+            headlines = []
+            summary = f"Gagal mengambil berita untuk {company}: {exc2}"
 
     return {
         "news_headlines": headlines,
