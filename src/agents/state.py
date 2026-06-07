@@ -22,9 +22,12 @@ class AgentState(TypedDict):
     pdf_path: Optional[str]  # optional path to the annual-report PDF
 
     # ---- evidence collected by worker nodes --------------------------------- #
-    financials: Optional[dict]    # CompanyFinancials.model_dump() from financial_node
-    doc_chunks: list[str]         # analyst-relevant PDF excerpts from document_node
-    news_headlines: list[str]     # recent news snippets from news_node
+    # None  = worker has NOT run yet  (supervisor will dispatch it)
+    # []    = worker ran but returned no results  (supervisor moves on)
+    # [..] = worker ran and returned results
+    financials: Optional[dict]           # CompanyFinancials.model_dump() from financial_node
+    doc_chunks: Optional[list[str]]      # analyst-relevant PDF excerpts from document_node
+    news_headlines: Optional[list[str]]  # recent news snippets from news_node
 
     # ---- final output ------------------------------------------------------- #
     risk_report: Optional[dict]   # RiskReport.model_dump() from risk_analyst_node

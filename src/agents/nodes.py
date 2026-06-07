@@ -54,10 +54,11 @@ def supervisor_node(state: AgentState) -> dict:
     ``document_agent`` is skipped when no ``pdf_path`` is provided.
     """
     has_financials = state.get("financials") is not None
-    has_news = bool(state.get("news_headlines"))
-    # doc is "done" when either we've fetched chunks OR there's no PDF to parse
+    # None = not yet fetched; [] or [...] = already ran (may have 0 results)
+    has_news = state.get("news_headlines") is not None
+    # doc is "done" when worker ran (None→[] or None→[...]) OR no PDF to parse
     pdf_path = state.get("pdf_path")
-    has_docs = bool(state.get("doc_chunks")) or (pdf_path is None)
+    has_docs = state.get("doc_chunks") is not None or pdf_path is None
     has_report = state.get("risk_report") is not None
 
     if has_report:

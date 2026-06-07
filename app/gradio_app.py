@@ -197,20 +197,20 @@ def analyze(
         return
 
     # ---- stream graph execution ---------------------------------------------
+    # stream_mode="values" yields the full cumulative state after each step.
+    # Track message count to yield only newly appended messages.
     final_state: dict | None = None
+    prev_msg_count = 0
     try:
         for step in graph.stream(
             initial_state, {"recursion_limit": 25}, stream_mode="values"
         ):
             msgs = step.get("messages") or []
-            if msgs:
-                last = msgs[-1]
-                name = getattr(last, "name", None) or "supervisor"
-                content = (last.content or "")[:300]
-                yield (
-                    f"{_LOADING} `[{name}]` {content}",
-                    _EMPTY, _EMPTY, _EMPTY,
-                )
+            for msg in msgs[prev_msg_count:]:
+                name = getattr(msg, "name", None) or "supervisor"
+                content = (msg.content or "")[:300]
+                yield (f"{_LOADING} `[{name}]` {content}", _EMPTY, _EMPTY, _EMPTY)
+            prev_msg_count = len(msgs)
             final_state = step
     except Exception as exc:
         yield (

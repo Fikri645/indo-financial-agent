@@ -41,8 +41,8 @@ def _base_state(**overrides):
         "ticker": "BBRI",
         "pdf_path": None,
         "financials": None,
-        "doc_chunks": [],
-        "news_headlines": [],
+        "doc_chunks": None,      # None = not yet fetched
+        "news_headlines": None,  # None = not yet fetched
         "risk_report": None,
         "next": "",
     }
@@ -98,35 +98,59 @@ class TestSupervisorNode:
         assert result["next"] == "financial_agent"
 
     def test_routes_to_news_after_financial(self):
-        state = _base_state(financials={"ticker": "BBRI.JK"})
+        # news_headlines=None → not fetched yet → should go to news_agent
+        state = _base_state(financials={"ticker": "BBRI.JK"}, news_headlines=None)
         result = supervisor_node(state)
         assert result["next"] == "news_agent"
+
+    def test_routes_to_risk_analyst_when_news_empty_no_pdf(self):
+        # news_headlines=[] → fetched but 0 results → treated as done
+        state = _base_state(
+            financials={"ticker": "BBRI.JK"},
+            news_headlines=[],     # fetched, empty result — still done
+            pdf_path=None,
+        )
+        result = supervisor_node(state)
+        assert result["next"] == "risk_analyst"
 
     def test_routes_to_risk_analyst_when_all_data_ready_no_pdf(self):
         state = _base_state(
             financials={"ticker": "BBRI.JK"},
             news_headlines=["headline 1"],
-            pdf_path=None,         # no PDF → doc is considered done
+            pdf_path=None,         # no PDF → doc considered done
         )
         result = supervisor_node(state)
         assert result["next"] == "risk_analyst"
 
     def test_routes_to_document_agent_when_pdf_provided_but_not_parsed(self):
+        # doc_chunks=None → not fetched yet (pdf_path is set)
         state = _base_state(
             financials={"ticker": "BBRI.JK"},
             news_headlines=["headline 1"],
             pdf_path="/data/BBRI.pdf",
-            doc_chunks=[],          # not parsed yet
+            doc_chunks=None,        # None = not yet fetched
         )
         result = supervisor_node(state)
         assert result["next"] == "document_agent"
 
     def test_routes_to_risk_analyst_after_document_parsed(self):
+        # doc_chunks=[] → fetched (even if empty) → done
         state = _base_state(
             financials={"ticker": "BBRI.JK"},
             news_headlines=["headline 1"],
             pdf_path="/data/BBRI.pdf",
             doc_chunks=["[risk] Some risk section text."],
+        )
+        result = supervisor_node(state)
+        assert result["next"] == "risk_analyst"
+
+    def test_routes_to_risk_analyst_when_pdf_doc_empty(self):
+        # doc_chunks=[] (fetched, empty) should still be considered done
+        state = _base_state(
+            financials={"ticker": "BBRI.JK"},
+            news_headlines=["headline 1"],
+            pdf_path="/data/BBRI.pdf",
+            doc_chunks=[],          # fetched but 0 chunks → still done
         )
         result = supervisor_node(state)
         assert result["next"] == "risk_analyst"
@@ -263,7 +287,7 @@ class TestRiskAnalystNode:
         return _base_state(
             financials=fin,
             news_headlines=["BBRI Laba Naik — laba naik 15% YoY"],
-            doc_chunks=["[risk] Risiko keuangan moderat."],
+            doc_chunks=["[risk] Risiko keuangan moderat."],  # non-None = fetched
         )
 
     def test_success_produces_risk_report(self):
@@ -339,8 +363,8 @@ class TestFullGraph:
                 "ticker": "BBRI",
                 "pdf_path": None,
                 "financials": None,
-                "doc_chunks": [],
-                "news_headlines": [],
+                "doc_chunks": None,      # None = not yet fetched
+                "news_headlines": None,  # None = not yet fetched
                 "risk_report": None,
                 "next": "",
             }

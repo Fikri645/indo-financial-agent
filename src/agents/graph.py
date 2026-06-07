@@ -105,8 +105,8 @@ def _make_initial_state(ticker: str, pdf_path: str | None = None) -> AgentState:
         "ticker": ticker,
         "pdf_path": pdf_path,
         "financials": None,
-        "doc_chunks": [],
-        "news_headlines": [],
+        "doc_chunks": None,      # None = not yet fetched (sentinel)
+        "news_headlines": None,  # None = not yet fetched (sentinel)
         "risk_report": None,
         "next": "",
     }
@@ -121,14 +121,16 @@ def _run_and_print(ticker: str, pdf_path: str | None = None) -> None:
     print(f"  PDF     : {pdf_path or '(tidak ada)'}")
     print(f"{'='*60}\n")
 
-    # stream_mode="updates" yields {node_name: partial_update} per step
+    # stream_mode="values" yields the full cumulative state after each step.
+    # Track message count to print only newly appended messages each step.
     final_state: AgentState | None = None
+    prev_msg_count = 0
     for step in graph.stream(initial, {"recursion_limit": 25}, stream_mode="values"):
-        msgs = step.get("messages", [])
-        if msgs:
-            last = msgs[-1]
-            name = getattr(last, "name", None) or "agent"
-            print(f"  [{name}] {last.content}")
+        msgs = step.get("messages") or []
+        for msg in msgs[prev_msg_count:]:
+            name = getattr(msg, "name", None) or "agent"
+            print(f"  [{name}] {msg.content}")
+        prev_msg_count = len(msgs)
         final_state = step
 
     # Print final structured report
