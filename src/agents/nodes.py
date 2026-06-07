@@ -189,7 +189,7 @@ def news_node(state: AgentState) -> dict:
     logger.info("news_node: searching news for %s", company)
 
     try:
-        items = fetch_news(company, max_results=6)
+        items = fetch_news(company, max_results=6, ticker=ticker)
         headlines = [f"{it.title} — {it.snippet[:200]}" for it in items]
         summary = f"Ditemukan {len(headlines)} berita terbaru untuk {company}."
     except Exception as exc:
