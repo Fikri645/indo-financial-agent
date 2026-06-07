@@ -1,0 +1,36 @@
+# Lightweight requirements for Hugging Face Spaces deployment.
+# Heavy ML deps (docling, sentence-transformers, chromadb) are excluded:
+#   - PDF parsing (document_node) degrades gracefully to empty chunks
+#   - Dense retrieval falls back to BM25-only
+# Core pipeline (yfinance → risk ratios → news → LLM synthesis) works fully.
+
+# --- Agent orchestration ---
+langgraph>=0.2.50
+langchain>=0.3.0
+langchain-core>=0.3.0
+langchain-community>=0.3.0
+
+# --- LLM providers ---
+langchain-groq>=0.2.0
+langchain-google-genai>=2.0.0
+langchain-openai>=0.2.0
+
+# --- Financial data ---
+yfinance>=0.2.50
+pandas>=2.0.0
+numpy>=1.26.0
+
+# --- Retrieval (sparse only — no embedding model) ---
+rank-bm25>=0.2.2
+
+# --- News ---
+ddgs>=6.0.0
+
+# --- Output validation ---
+pydantic>=2.0.0
+
+# --- UI ---
+gradio>=5.0.0
+
+# --- Utils ---
+python-dotenv>=1.0.0

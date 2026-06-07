@@ -91,8 +91,9 @@ Get free PDFs from IDX:
       with Pydantic validation and graceful LLM-failure fallback (**40 unit tests green**)
 - [x] **Gradio UI** — streaming progress, 4-tab report layout (summary / ratios / flags / sources),
       PDF upload, Enter-to-submit (`app/gradio_app.py` + `app.py` HF Spaces entrypoint)
-- [ ] LangSmith tracing + agent evaluation harness
-- [ ] Hugging Face Spaces deployment
+- [x] **LangSmith tracing** — automatic via `LANGCHAIN_TRACING_V2=true` + `LANGCHAIN_API_KEY`
+      (LangGraph traces every run; no code changes required)
+- [x] **Hugging Face Spaces** — live at [fikri0o0/indo-financial-agent](https://huggingface.co/spaces/fikri0o0/indo-financial-agent)
 
 ---
 
