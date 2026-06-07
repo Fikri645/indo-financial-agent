@@ -52,3 +52,36 @@ def test_moderate_leverage_only():
 
 def test_none_ratios_produce_no_flags():
     assert evaluate_ratios(FinancialRatios()) == []
+
+
+def test_bank_high_der_not_flagged_as_leverage():
+    """A bank with DER 5.6 (normal for banks) must NOT be flagged for leverage."""
+    ratios = FinancialRatios(
+        debt_to_equity=5.6,   # would be HIGH for a general corporate
+        net_profit_margin=0.30,
+        roe=0.17,
+        revenue_growth=0.08,
+    )
+    general_flags = evaluate_ratios(ratios, sector="general")
+    financial_flags = evaluate_ratios(ratios, sector="financial")
+
+    # General corporate: DER 5.6 trips the HIGH leverage rule.
+    assert any(f.category == "leverage" for f in general_flags)
+    # Bank: leverage rule is suppressed → no leverage flag.
+    assert not any(f.category == "leverage" for f in financial_flags)
+    assert overall_risk(financial_flags) == RiskLevel.LOW
+
+
+def test_bank_still_flagged_for_losses():
+    """Profitability rules still apply to banks (sector-agnostic)."""
+    ratios = FinancialRatios(debt_to_equity=6.0, net_profit_margin=-0.05, roe=-0.03)
+    flags = evaluate_ratios(ratios, sector="financial")
+    categories = {f.category for f in flags}
+    assert "profitability" in categories
+    assert "leverage" not in categories  # bank leverage still suppressed
+
+
+def test_general_sector_is_default():
+    """Calling without a sector keeps the original (general) behaviour."""
+    ratios = FinancialRatios(debt_to_equity=3.0)
+    assert evaluate_ratios(ratios) == evaluate_ratios(ratios, sector="general")

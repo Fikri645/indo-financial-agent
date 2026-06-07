@@ -48,6 +48,8 @@ class CompanyFinancials(BaseModel):
     ticker: str
     company_name: Optional[str] = None
     currency: Optional[str] = None
+    sector: Optional[str] = Field(None, description="Coarse sector: financial | general")
+    industry: Optional[str] = Field(None, description="Raw yfinance industry label")
     period_end: Optional[str] = Field(None, description="Latest annual period end (ISO date)")
     ratios: FinancialRatios = Field(default_factory=FinancialRatios)
     # Raw headline figures (latest period), in reporting currency

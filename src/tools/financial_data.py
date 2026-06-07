@@ -59,6 +59,24 @@ def _safe_div(num: Optional[float], den: Optional[float]) -> Optional[float]:
     return round(num / den, 4)
 
 
+# yfinance sector/industry labels that mean "balance sheet works differently"
+# (banks, insurers, capital markets). For these, liquidity/leverage thresholds
+# tuned for industrials produce misleading flags (e.g. a bank's DER is naturally
+# high because customer deposits are liabilities).
+_FINANCIAL_KEYWORDS = (
+    "bank", "insurance", "asuransi", "financial", "capital markets",
+    "credit", "mortgage", "asset management", "diversified financ",
+)
+
+
+def classify_sector(sector: Optional[str], industry: Optional[str]) -> str:
+    """Collapse yfinance sector/industry into 'financial' or 'general'."""
+    blob = f"{sector or ''} {industry or ''}".lower()
+    if any(kw in blob for kw in _FINANCIAL_KEYWORDS):
+        return "financial"
+    return "general"
+
+
 def _growth(df: Optional[pd.DataFrame], aliases: list[str]) -> Optional[float]:
     """YoY growth using the two newest columns (col 0 = latest, col 1 = prior)."""
     latest = _first_row(df, aliases, 0)
@@ -133,10 +151,15 @@ def fetch_financials(ticker: str) -> CompanyFinancials:
             balance_sheet.columns[0], "date"
         ) else str(balance_sheet.columns[0])
 
+    raw_sector = info.get("sector")
+    raw_industry = info.get("industry")
+
     return CompanyFinancials(
         ticker=symbol,
         company_name=info.get("longName") or info.get("shortName"),
         currency=info.get("financialCurrency") or info.get("currency"),
+        sector=classify_sector(raw_sector, raw_industry),
+        industry=raw_industry,
         period_end=period_end,
         ratios=ratios,
         total_revenue=_first_row(income_stmt, _IS_ALIASES["total_revenue"]),

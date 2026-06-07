@@ -234,10 +234,11 @@ def risk_analyst_node(state: AgentState) -> dict:
     # ---- 1. Deterministic rule-based scorer (quantitative baseline) ----------
     flags: list[RiskFlag] = []
     quant_risk = RiskLevel.MODERATE
+    sector = fin_data.get("sector") or "general"
     if fin_data.get("ratios"):
         try:
             ratios = FinancialRatios(**fin_data["ratios"])
-            flags = evaluate_ratios(ratios)
+            flags = evaluate_ratios(ratios, sector=sector)
             quant_risk = overall_risk(flags)
         except Exception as exc:
             logger.warning("Rule-based scoring failed: %s", exc)
@@ -260,10 +261,17 @@ def risk_analyst_node(state: AgentState) -> dict:
         rule_flags_json = json.dumps(
             [f.model_dump() for f in flags], ensure_ascii=False, indent=2
         )
+        sector_note = ""
+        if sector == "financial":
+            sector_note = (
+                "\n\nCatatan sektor: perusahaan ini **lembaga keuangan (bank/asuransi)**. "
+                "DER yang tinggi adalah NORMAL (simpanan nasabah = liabilitas) dan "
+                "current ratio tidak relevan — jangan menandainya sebagai risiko."
+            )
         context_parts.append(
-            f"## Data Fundamental\n{ratios_str}\n\n"
+            f"## Data Fundamental (sektor: {sector})\n{ratios_str}\n\n"
             f"Quantitative risk (rule-based): **{quant_risk.value.upper()}**\n"
-            f"Rule flags:\n```json\n{rule_flags_json}\n```"
+            f"Rule flags:\n```json\n{rule_flags_json}\n```{sector_note}"
         )
 
     if news:

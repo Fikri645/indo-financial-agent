@@ -2,7 +2,22 @@
 import pandas as pd
 import pytest
 
-from src.tools.financial_data import compute_ratios
+from src.tools.financial_data import classify_sector, compute_ratios
+
+
+@pytest.mark.parametrize(
+    "sector,industry,expected",
+    [
+        ("Financial Services", "Banks - Regional", "financial"),
+        (None, "Insurance - Life", "financial"),
+        ("Financial Services", "Asset Management", "financial"),
+        ("Technology", "Software - Infrastructure", "general"),
+        ("Communication Services", "Telecom Services", "general"),
+        (None, None, "general"),
+    ],
+)
+def test_classify_sector(sector, industry, expected):
+    assert classify_sector(sector, industry) == expected
 
 
 @pytest.fixture
