@@ -1,0 +1,35 @@
+# Data — regenerate via scripts/
+data/raw/*.csv
+data/raw/*.parquet
+data/pdfs/*.pdf
+data/vectorstore/
+
+# Secrets
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+.coverage
+coverage.xml
+htmlcov/
+
+# Envs
+.venv/
+venv/
+env/
+
+# Caches (HF / docling models)
+.cache/
+
+# OS / IDE
+.DS_Store
+.vscode/
+.idea/
+*.swp
+
+# Reports (regenerated)
+reports/*.json

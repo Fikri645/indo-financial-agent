@@ -1,0 +1,36 @@
+# --- Agent orchestration ---
+langgraph>=0.2.50
+langchain>=0.3.0
+langchain-core>=0.3.0
+langchain-community>=0.3.0
+
+# --- LLM providers (free-tier friendly) ---
+langchain-groq>=0.2.0
+langchain-google-genai>=2.0.0
+langchain-openai>=0.2.0          # used for OpenRouter (OpenAI-compatible endpoint)
+
+# --- Structured financial data ---
+yfinance>=0.2.50
+pandas>=2.0.0
+numpy>=1.26.0
+
+# --- PDF parsing (financial statements) ---
+docling>=2.0.0
+
+# --- RAG over documents ---
+chromadb>=0.5.0
+langchain-chroma>=0.1.4
+sentence-transformers>=3.0.0     # multilingual-e5 embeddings
+rank-bm25>=0.2.2                 # hybrid (sparse) retrieval
+
+# --- News / web search (free, no key) ---
+ddgs>=6.0.0
+
+# --- Output validation ---
+pydantic>=2.0.0
+
+# --- UI ---
+gradio>=5.0.0
+
+# --- Utils ---
+python-dotenv>=1.0.0
