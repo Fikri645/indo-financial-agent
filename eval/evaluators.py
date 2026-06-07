@@ -153,26 +153,62 @@ def eval_sector_correct(
 # --------------------------------------------------------------------------- #
 
 _JUDGE_PROMPT = """\
-Kamu adalah evaluator. Nilai apakah RINGKASAN risiko di bawah ini DIDUKUNG oleh
-DATA yang diberikan (rasio + flags). Jangan menilai gaya bahasa — hanya apakah
-klaim dalam ringkasan konsisten dengan data dan tidak mengarang angka.
+Kamu adalah evaluator laporan risiko keuangan. Nilai apakah RINGKASAN di bawah \
+ini DIDUKUNG oleh DATA yang diberikan (rasio keuangan + flags).
 
-Beri skor 1 (didukung penuh), 0.5 (sebagian), atau 0 (mengarang/kontradiktif).
-Jawab HANYA dalam format: SKOR|alasan singkat
+PENTING — konteks sektor:
+- Jika SEKTOR = "financial" (bank/asuransi/lembaga keuangan):
+  • Debt-to-Equity (DER) yang tinggi adalah NORMAL — simpanan nasabah dicatat
+    sebagai liabilitas bank, bukan utang korporat biasa.
+  • Current Ratio tidak relevan untuk bank (bisnis model berbeda).
+  • Jangan anggap ringkasan salah hanya karena tidak menyebut DER/liquidity
+    bank sebagai risiko — itu justru benar secara domain.
+- Jika SEKTOR = "general": evaluasi standar semua metrik.
+
+Yang kamu nilai:
+1. Apakah klaim kuantitatif dalam ringkasan KONSISTEN dengan angka rasio?
+2. Apakah ringkasan TIDAK mengarang angka yang tidak ada di data?
+3. Apakah ada KONTRADIKSI NYATA antara ringkasan dan data (mis. ringkasan
+   bilang "aman" padahal ada flag SEVERE yang tidak dijelaskan sama sekali)?
+
+Skoring:
+- 1.0 → ringkasan didukung penuh, konsisten dengan data
+- 0.5 → sebagian besar konsisten, ada klaim yang tidak dapat diverifikasi
+- 0.0 → kontradiksi nyata atau angka yang dikarang
+
+Jawab HANYA dalam format: SKOR|alasan singkat (maks 120 karakter)
+Contoh: 1.0|Semua klaim rasio dan risk level konsisten dengan data yang ada
 """
 
 
 def eval_groundedness_llm(
-    report: RiskReport, llm=None, **_
+    report: RiskReport,
+    llm=None,
+    financials: Optional[dict] = None,
+    expected_sector: Optional[str] = None,
+    **_,
 ) -> EvalResult:
-    """LLM-as-judge: is the narrative summary grounded in the ratios + flags?"""
+    """LLM-as-judge: is the narrative summary grounded in the ratios + flags?
+
+    Passes sector context to the judge so it does not incorrectly penalise
+    bank reports for high DER (which is structurally normal for banks).
+    """
     if llm is None:
         return EvalResult("groundedness_llm", -1.0, "Skipped (no LLM provided)")
     from langchain_core.messages import HumanMessage, SystemMessage
 
+    # Determine sector: prefer explicit expectation, fall back to financials dict
+    sector = (
+        expected_sector
+        or (financials or {}).get("sector")
+        or "general"
+    )
+
     data_block = (
+        f"SEKTOR: {sector}\n"
+        f"OVERALL_RISK: {report.overall_risk.value}\n"
         f"RASIO: {report.key_ratios.model_dump()}\n"
-        f"FLAGS: {[f.model_dump() for f in report.flags]}\n"
+        f"FLAGS ({len(report.flags)} item): {[f.model_dump() for f in report.flags]}\n"
         f"RINGKASAN: {report.summary}"
     )
     try:
@@ -181,11 +217,17 @@ def eval_groundedness_llm(
             HumanMessage(content=data_block),
         ])
         text = (resp.content or "").strip()
-        m = re.match(r"\s*(1(?:\.0)?|0(?:\.5)?|0(?:\.0)?)\s*\|?\s*(.*)", text)
+        # Accept: "1", "1.0", "0.5", "0", "0.0" with "|", "–", "-", " " as separator
+        m = re.match(
+            r"\s*(1(?:\.0)?|0\.5|0(?:\.0)?)\s*[||\-–—·]?\s*(.*)",
+            text,
+            re.DOTALL,
+        )
         if not m:
-            return EvalResult("groundedness_llm", 0.5, f"Unparseable judge output: {text[:80]}")
+            return EvalResult("groundedness_llm", 0.5, f"Unparseable: {text[:80]}")
         score = float(m.group(1))
-        return EvalResult("groundedness_llm", score, m.group(2)[:120] or "judge")
+        reason = (m.group(2) or "").strip()[:120]
+        return EvalResult("groundedness_llm", score, reason or "judge")
     except Exception as exc:
         return EvalResult("groundedness_llm", -1.0, f"Judge error: {exc}")
 

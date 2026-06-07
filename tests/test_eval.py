@@ -154,6 +154,43 @@ def test_groundedness_llm_skipped_without_llm():
     assert res.score == -1.0  # sentinel = skipped
 
 
+def test_groundedness_llm_passes_sector_to_judge():
+    """Judge should receive the sector from financials so it can apply bank rules."""
+    judge = MagicMock()
+    judge.invoke.return_value = MagicMock(content="1.0|konsisten")
+    eval_groundedness_llm(
+        _report(),
+        llm=judge,
+        financials={"sector": "financial"},
+    )
+    call_args = judge.invoke.call_args[0][0]
+    # The HumanMessage content must contain the sector label
+    human_content = call_args[1].content
+    assert "financial" in human_content
+
+
+def test_groundedness_llm_expected_sector_overrides_financials():
+    """expected_sector should take priority over financials dict."""
+    judge = MagicMock()
+    judge.invoke.return_value = MagicMock(content="1|ok")
+    eval_groundedness_llm(
+        _report(),
+        llm=judge,
+        financials={"sector": "general"},
+        expected_sector="financial",
+    )
+    human_content = judge.invoke.call_args[0][0][1].content
+    assert "financial" in human_content
+
+
+def test_groundedness_llm_score_zero_parsed():
+    """A score of 0 (contradiction) should parse to 0.0 cleanly."""
+    judge = MagicMock()
+    judge.invoke.return_value = MagicMock(content="0|ringkasan kontradiksi dengan data")
+    res = eval_groundedness_llm(_report(), llm=judge)
+    assert res.score == 0.0
+
+
 # --- run_all integration --------------------------------------------------- #
 
 def test_run_all_deterministic_only():

@@ -1,16 +1,17 @@
-"""Gradio UI for the Indonesian Financial Research Agent.
+"""Gradio UI — Indonesian Financial Research Agent (Enhanced).
 
-Streams real-time progress while the LangGraph graph runs, then renders the
-final RiskReport as a structured multi-tab layout.
+Streams real-time agent progress in a dedicated log panel, then renders the
+final RiskReport as a rich, sector-aware multi-tab layout.
 
 Run locally:
-    python app/gradio_app.py          # or: make app
+    python app/gradio_app.py      # or: make app
 Deploy:
     Push to Hugging Face Spaces (see app.py at project root).
 """
 from __future__ import annotations
 
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Generator
 
@@ -21,123 +22,324 @@ if str(_ROOT) not in sys.path:
 
 import gradio as gr  # noqa: E402
 
-# --------------------------------------------------------------------------- #
-# Risk-level display helpers
-# --------------------------------------------------------------------------- #
+# ─────────────────────────────────────────────────────────────────────────────
+# Visual constants
+# ─────────────────────────────────────────────────────────────────────────────
 
-_RISK_EMOJI = {
-    "low": "🟢",
-    "moderate": "🟡",
-    "high": "🟠",
-    "severe": "🔴",
+# (badge_color, background_color, label)
+_RISK_STYLE: dict[str, tuple[str, str, str]] = {
+    "low":      ("#16a34a", "#f0fdf4", "✅ RISIKO RENDAH"),
+    "moderate": ("#ca8a04", "#fefce8", "⚠️ RISIKO MODERAT"),
+    "high":     ("#ea580c", "#fff7ed", "🟠 RISIKO TINGGI"),
+    "severe":   ("#dc2626", "#fef2f2", "🔴 RISIKO KRITIS"),
 }
 
-_RISK_LABEL = {
-    "low": "RENDAH",
-    "moderate": "MODERAT",
-    "high": "TINGGI",
-    "severe": "KRITIS",
+_SEV_STYLE: dict[str, tuple[str, str, str]] = {
+    "low":      ("#16a34a", "#f0fdf4", "RENDAH"),
+    "moderate": ("#ca8a04", "#fefce8", "MODERAT"),
+    "high":     ("#ea580c", "#fff7ed", "TINGGI"),
+    "severe":   ("#dc2626", "#fef2f2", "KRITIS"),
 }
 
-_SEVERITY_EMOJI = {
-    "low": "🟢",
-    "moderate": "🟡",
-    "high": "🟠",
-    "severe": "🔴",
+_AGENT_ICONS: dict[str, str] = {
+    "financial_agent": "📊",
+    "news_agent":      "📰",
+    "document_agent":  "📄",
+    "risk_analyst":    "🧠",
+    "supervisor":      "🎯",
 }
 
-_RATIO_LABELS = {
-    "current_ratio": ("Current Ratio", None),
-    "quick_ratio": ("Quick Ratio", None),
-    "debt_to_equity": ("Debt-to-Equity (DER)", None),
-    "debt_ratio": ("Debt Ratio", None),
-    "interest_coverage": ("Interest Coverage", None),
-    "net_profit_margin": ("Net Profit Margin", "pct"),
-    "gross_margin": ("Gross Margin", "pct"),
-    "roe": ("ROE", "pct"),
-    "roa": ("ROA", "pct"),
-    "revenue_growth": ("Revenue Growth YoY", "pct"),
-    "net_income_growth": ("Net Income Growth YoY", "pct"),
+# ─── Ratio groups (key, display-label, format, sector-scope) ─────────────────
+_RATIO_GROUPS: list[tuple[str, list[tuple[str, str, str | None, str]]]] = [
+    ("💧 Likuiditas", [
+        ("current_ratio",    "Current Ratio",       None,  "general"),
+        ("quick_ratio",      "Quick Ratio",         None,  "general"),
+    ]),
+    ("⚖️ Leverage / Solvabilitas", [
+        ("debt_to_equity", "Debt-to-Equity (DER)", None, "general"),
+        ("debt_ratio", "Debt Ratio", None, "all"),
+        ("interest_coverage", "Interest Coverage", None, "all"),
+    ]),
+    ("💰 Profitabilitas", [
+        ("net_profit_margin", "Net Profit Margin", "pct", "all"),
+        ("gross_margin", "Gross Margin", "pct", "all"),
+        ("roe", "Return on Equity (ROE)", "pct", "all"),
+        ("roa", "Return on Assets (ROA)", "pct", "all"),
+    ]),
+    ("📈 Pertumbuhan YoY", [
+        ("revenue_growth", "Revenue Growth", "pct", "all"),
+        ("net_income_growth", "Net Income Growth", "pct", "all"),
+    ]),
+]
+
+# (operator, threshold, benchmark_label)
+_BENCHMARKS: dict[str, tuple[str, float, str]] = {
+    "current_ratio":     (">", 1.5,  "≥ 1.5 sehat"),
+    "quick_ratio":       (">", 1.0,  "≥ 1.0 sehat"),
+    "debt_to_equity":    ("<", 2.0,  "< 2.0 aman"),
+    "interest_coverage": (">", 2.0,  "≥ 2.0× aman"),
+    "net_profit_margin": (">", 0.05, "> 5%"),
+    "gross_margin":      (">", 0.20, "> 20%"),
+    "roe":               (">", 0.10, "> 10%"),
+    "roa":               (">", 0.03, "> 3%"),
+    "revenue_growth":    (">", 0.0,  "positif"),
+    "net_income_growth": (">", 0.0,  "positif"),
 }
 
+_CSS = """
+/* Progress log — dark terminal feel */
+.progress-log { font-family: 'Courier New', monospace; font-size: 0.83rem;
+                line-height: 1.6; }
 
-# --------------------------------------------------------------------------- #
-# Report formatting helpers
-# --------------------------------------------------------------------------- #
+/* Tabs */
+.tab-nav button { font-weight: 600 !important; }
+
+/* General output markdown */
+.output-md  { font-size: 0.93rem; line-height: 1.75; }
+
+/* Thinner divider */
+hr { margin: 12px 0 !important; opacity: 0.3; }
+"""
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Formatting helpers
+# ─────────────────────────────────────────────────────────────────────────────
 
 def _fmt_val(val: float | None, fmt: str | None) -> str:
     if val is None:
         return "*N/A*"
-    if fmt == "pct":
-        return f"{val:.1%}"
-    return f"{val:.2f}"
+    return f"{val:.1%}" if fmt == "pct" else f"{val:.2f}"
 
 
-def _format_summary(report: dict, ticker: str) -> str:
-    risk_val = report.get("overall_risk", "moderate")
-    emoji = _RISK_EMOJI.get(risk_val, "⚪")
-    label = _RISK_LABEL.get(risk_val, risk_val.upper())
-    company = report.get("company_name") or ticker
+def _status_icon(key: str, val: float | None, sector: str) -> str:
+    """Return ✅/❌/— based on benchmark. Bank skips liquidity & leverage."""
+    if val is None:
+        return "—"
+    # For banks, liquidity/leverage benchmarks are not applicable
+    if sector == "financial" and key in ("current_ratio", "quick_ratio", "debt_to_equity"):
+        return "*N/A*"
+    bench = _BENCHMARKS.get(key)
+    if not bench:
+        return "—"
+    op, threshold, _ = bench
+    passed = (val > threshold) if op == ">" else (val < threshold)
+    return "✅" if passed else "❌"
 
+
+def _key_metrics_html(ratios: dict, sector: str, accent: str) -> str:
+    """3–4 prominent metric boxes shown inside the summary card."""
+    if sector == "financial":
+        keys = [
+            ("roe", "ROE", "pct"),
+            ("roa", "ROA", "pct"),
+            ("net_profit_margin", "Net Margin", "pct"),
+            ("net_income_growth", "Income Growth", "pct"),
+        ]
+    else:
+        keys = [
+            ("current_ratio", "Current Ratio", None),
+            ("debt_to_equity", "DER", None),
+            ("net_profit_margin", "Net Margin", "pct"),
+            ("roe", "ROE", "pct"),
+        ]
+
+    boxes = ""
+    for k, lbl, fmt in keys:
+        val = ratios.get(k)
+        if val is None:
+            continue
+        boxes += (
+            f'<div style="background:#ffffff;border:1px solid #e2e8f0;border-radius:8px;'
+            f'padding:10px 14px;flex:1;min-width:100px;text-align:center;">'
+            f'<div style="font-size:1.35em;font-weight:bold;color:{accent};">'
+            f'{_fmt_val(val, fmt).replace("*", "")}</div>'
+            f'<div style="font-size:0.72em;color:#64748b;margin-top:2px;">{lbl}</div>'
+            f'</div>'
+        )
+    if not boxes:
+        return ""
     return (
-        f"## {emoji} {company} ({ticker.upper()})\n\n"
-        f"**Tingkat Risiko Keseluruhan: {label}**\n\n"
-        f"---\n\n"
-        f"{report.get('summary', '*Ringkasan tidak tersedia.*')}"
+        f'<div style="display:flex;gap:10px;flex-wrap:wrap;margin:14px 0 4px;">'
+        f'{boxes}</div>'
     )
 
 
-def _format_ratios(report: dict) -> str:
+def _format_summary(
+    report: dict, ticker: str, financials: dict | None = None
+) -> str:
+    risk_val = (report.get("overall_risk") or "moderate").lower()
+    accent, bg, badge_label = _RISK_STYLE.get(
+        risk_val, ("#6b7280", "#f9fafb", "❓ TIDAK DIKETAHUI")
+    )
+    company = report.get("company_name") or ticker
+    sector = (financials or {}).get("sector", "general")
+    industry = (financials or {}).get("industry") or ""
+    period = (financials or {}).get("period_end") or ""
+
+    sector_label = "🏦 Perbankan / Keuangan" if sector == "financial" else "🏭 Korporat Umum"
+    sector_colors = (
+        ("#1e40af", "#dbeafe") if sector == "financial" else ("#065f46", "#d1fae5")
+    )
+    period_str = f" · {period}" if period else ""
+    industry_str = (
+        f"<p style='color:#64748b;font-size:0.84em;margin:2px 0 0;'>{industry}</p>"
+        if industry else ""
+    )
+
+    metrics_html = _key_metrics_html(report.get("key_ratios") or {}, sector, accent)
+
+    num_flags = len(report.get("flags") or [])
+    flags_summary = (
+        f"&nbsp;·&nbsp; <strong>{num_flags} flag risiko</strong>"
+        if num_flags else "&nbsp;·&nbsp; ✅ tidak ada flag risiko"
+    )
+
+    summary_text = report.get("summary") or "*Ringkasan tidak tersedia.*"
+
+    card = (
+        f'<div style="background:{bg};border-left:6px solid {accent};'
+        f'border-radius:10px;padding:20px 22px;margin-bottom:16px;">'
+        # badges row
+        f'<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;">'
+        f'<span style="background:{accent};color:white;padding:5px 16px;border-radius:20px;'
+        f'font-weight:bold;font-size:0.95em;">{badge_label}</span>'
+        f'<span style="background:{sector_colors[1]};color:{sector_colors[0]};padding:3px 10px;'
+        f'border-radius:12px;font-size:0.80em;font-weight:600;">{sector_label}</span>'
+        f'</div>'
+        # company heading
+        f'<h2 style="margin:0 0 2px;color:#1e293b;font-size:1.3em;">'
+        f'{company} <span style="color:#94a3b8;font-weight:400;font-size:0.75em;">'
+        f'({ticker.upper()}{period_str})</span>'
+        f'</h2>'
+        f'{industry_str}'
+        # metrics
+        f'{metrics_html}'
+        # footer meta
+        f'<div style="font-size:0.78em;color:#94a3b8;margin-top:8px;">'
+        f'Overall risk: <strong>{risk_val.upper()}</strong>{flags_summary}'
+        f'</div>'
+        f'</div>'
+    )
+
+    return card + "\n\n" + summary_text
+
+
+def _format_ratios(report: dict, financials: dict | None = None) -> str:
     ratios = report.get("key_ratios") or {}
-    rows: list[str] = []
-    for key, (label, fmt) in _RATIO_LABELS.items():
-        val = ratios.get(key)
-        if val is not None:
-            rows.append(f"| {label} | {_fmt_val(val, fmt)} |")
-    if not rows:
+    sector = (financials or {}).get("sector", "general")
+    parts: list[str] = []
+    has_any = False
+
+    for group_title, fields in _RATIO_GROUPS:
+        rows: list[str] = []
+        for key, label, fmt, _ in fields:
+            val = ratios.get(key)
+            if val is None:
+                continue
+            has_any = True
+            status = _status_icon(key, val, sector)
+            if sector == "financial" and key in ("current_ratio", "quick_ratio", "debt_to_equity"):
+                bench_str = "*tidak relevan (bank)*"
+            elif key in _BENCHMARKS:
+                bench_str = _BENCHMARKS[key][2]
+            else:
+                bench_str = "—"
+            rows.append(
+                f"| {label} | **{_fmt_val(val, fmt).replace('*', '')}** "
+                f"| {bench_str} | {status} |"
+            )
+        if rows:
+            header = "| Metrik | Nilai | Benchmark | Status |\n|---|---:|---|:---:|"
+            parts.append(f"### {group_title}\n\n{header}\n" + "\n".join(rows))
+
+    if not has_any:
         return "*Data rasio keuangan tidak tersedia.*"
-    return "| Metrik | Nilai |\n|---|---|\n" + "\n".join(rows)
+
+    if sector == "financial":
+        parts.append(
+            "\n> 💡 **Catatan Bank:** Untuk lembaga keuangan, Debt-to-Equity (DER) yang "
+            "tinggi adalah **normal** — simpanan nasabah dicatat sebagai liabilitas. "
+            "Current Ratio dan DER tidak menjadi patokan risiko untuk sektor ini."
+        )
+
+    return "\n\n".join(parts)
 
 
 def _format_flags(report: dict) -> str:
     flags = report.get("flags") or []
     if not flags:
-        return "✅ **Tidak ada flag risiko signifikan yang ditemukan.**"
-    parts: list[str] = []
-    for f in flags:
-        sev = f.get("severity", "moderate")
-        sem = _SEVERITY_EMOJI.get(sev, "⚪")
-        cat = f.get("category", "").replace("_", " ").title()
-        parts.append(
-            f"### {sem} [{sev.upper()}] {cat}\n"
-            f"{f.get('finding', '')}\n\n"
-            f"> **Evidence:** {f.get('evidence', '')}  \n"
-            f"> **Source:** `{f.get('source', '')}`"
+        return (
+            '<div style="background:#f0fdf4;border:1px solid #86efac;border-radius:10px;'
+            'padding:20px;text-align:center;">'
+            '<div style="font-size:2em;">✅</div>'
+            '<strong style="color:#16a34a;">Tidak Ada Flag Risiko Signifikan</strong>'
+            '<p style="color:#4b5563;margin:8px 0 0;">Perusahaan ini tidak menunjukkan '
+            'flag risiko merah/kuning dari data yang tersedia.</p>'
+            '</div>'
         )
-    return "\n\n---\n\n".join(parts)
+
+    parts = [f"## ⚠️ {len(flags)} Flag Risiko Ditemukan\n"]
+    for f in flags:
+        sev = (f.get("severity") or "moderate").lower()
+        col, bg, sev_label = _SEV_STYLE.get(sev, ("#6b7280", "#f9fafb", "—"))
+        cat = f.get("category", "").replace("_", " ").title()
+        finding = f.get("finding", "")
+        evidence = f.get("evidence", "")
+        source = f.get("source", "")
+
+        parts.append(
+            f'<div style="background:{bg};border-left:5px solid {col};'
+            f'border-radius:0 10px 10px 0;padding:14px 18px;margin:14px 0;">'
+            f'<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">'
+            f'<span style="background:{col};color:white;padding:2px 11px;'
+            f'border-radius:10px;font-size:0.78em;font-weight:bold;">{sev_label}</span>'
+            f'<strong style="color:#1e293b;font-size:0.97em;">{cat}</strong>'
+            f'</div>'
+            f'<p style="margin:0 0 8px;color:#374151;line-height:1.6;">{finding}</p>'
+            f'<div style="font-size:0.82em;color:#6b7280;">'
+            f'📊 <em>{evidence}</em>'
+            f'{f"&nbsp;·&nbsp;🔗 <code>{source}</code>" if source else ""}'
+            f'</div>'
+            f'</div>'
+        )
+
+    return "\n".join(parts)
 
 
 def _format_positives(report: dict) -> str:
     positives = report.get("positives") or []
     sources = report.get("sources") or []
-    md = ""
+    parts: list[str] = []
+
     if positives:
-        md += "## ✅ Faktor Positif / Mitigasi Risiko\n\n"
-        md += "\n".join(f"- {p}" for p in positives)
-        md += "\n\n"
+        items = "\n".join(f"- ✅ {p}" for p in positives)
+        parts.append(f"## 💚 Faktor Positif / Mitigasi Risiko\n\n{items}")
     else:
-        md += "## ✅ Faktor Positif\n\n*Tidak ada catatan positif eksplisit.*\n\n"
+        parts.append(
+            "## 💚 Faktor Positif\n\n"
+            "*Tidak ada catatan positif eksplisit dari analisis ini.*"
+        )
+
     if sources:
-        md += "## 📚 Sumber Data\n\n"
-        md += "\n".join(f"- `{s}`" for s in sources)
-    return md
+        _src_desc = {
+            "yfinance":             "data fundamental & rasio keuangan",
+            "news_search":          "pencarian berita terkini",
+            "financial_report_pdf": "laporan keuangan / annual report PDF",
+        }
+        src_lines = []
+        for s in sources:
+            desc = next((v for k, v in _src_desc.items() if k in s.lower()), "")
+            src_lines.append(f"- `{s}`" + (f" — {desc}" if desc else ""))
+        parts.append("## 📚 Sumber Data\n\n" + "\n".join(src_lines))
+
+    return "\n\n".join(parts)
 
 
-# --------------------------------------------------------------------------- #
+# ─────────────────────────────────────────────────────────────────────────────
 # Core analysis function (streaming generator)
-# --------------------------------------------------------------------------- #
+# ─────────────────────────────────────────────────────────────────────────────
 
-_LOADING = "⏳"
 _EMPTY = ""
 
 
@@ -157,50 +359,71 @@ def _pdf_path(pdf_file) -> str | None:
 def analyze(
     ticker: str,
     pdf_file,
-) -> Generator[tuple[str, str, str, str], None, None]:
-    """Stream agent progress updates, then yield the final formatted report."""
+) -> Generator[tuple[str, str, str, str, str], None, None]:
+    """Stream agent progress to a dedicated log panel, then yield the full report.
+
+    Yields 5-tuples: (progress_log, summary, ratios, flags, positives).
+    During streaming only progress_log is updated; the 4 report tabs fill at end.
+    """
     from langchain_core.messages import HumanMessage
 
-    # ---- input validation ---------------------------------------------------
+    # ── input validation ──────────────────────────────────────────────────────
     ticker = (ticker or "").strip().upper()
     if not ticker:
-        yield "❌ Masukkan kode saham BEI (contoh: BBRI).", _EMPTY, _EMPTY, _EMPTY
+        yield (
+            "❌ Masukkan kode saham BEI (contoh: BBRI).",
+            _EMPTY, _EMPTY, _EMPTY, _EMPTY,
+        )
         return
 
     pdf_path = _pdf_path(pdf_file)
 
-    # ---- build initial graph state ------------------------------------------
+    # ── initial graph state ───────────────────────────────────────────────────
+    # IMPORTANT: use None as sentinel ("not yet fetched"), not []
+    # The supervisor checks `is not None` to decide whether each leg has run.
     initial_state = {
         "messages": [HumanMessage(content=f"Analisis risiko keuangan perusahaan {ticker}")],
-        "ticker": ticker,
-        "pdf_path": pdf_path,
-        "financials": None,
-        "doc_chunks": [],
-        "news_headlines": [],
-        "risk_report": None,
-        "next": "",
+        "ticker":        ticker,
+        "pdf_path":      pdf_path,
+        "financials":    None,
+        "doc_chunks":    None,   # None = not yet fetched (sentinel)
+        "news_headlines": None,  # None = not yet fetched (sentinel)
+        "risk_report":   None,
+        "next":          "",
     }
 
-    yield (
-        f"{_LOADING} Memulai analisis **{ticker}**...",
-        _EMPTY, _EMPTY, _EMPTY,
-    )
+    # ── live log accumulator ──────────────────────────────────────────────────
+    log_lines: list[str] = []
 
-    # ---- import graph (lazy — keeps startup fast) ---------------------------
+    def _log(line: str) -> None:
+        log_lines.append(line)
+
+    def _get_log() -> str:
+        return "\n\n".join(log_lines)
+
+    def _yield_progress() -> tuple[str, str, str, str, str]:
+        return (_get_log(), _EMPTY, _EMPTY, _EMPTY, _EMPTY)
+
+    ts = datetime.now().strftime("%H:%M:%S")
+    _log(f"**{ts}** — Memulai analisis **{ticker}**"
+         + (f" dengan PDF `{Path(pdf_path).name}`" if pdf_path else "") + " ...")
+    yield _yield_progress()
+
+    # ── lazy graph import (keeps startup fast) ────────────────────────────────
     try:
         from src.agents.graph import graph
     except Exception as exc:
-        yield (
-            f"❌ Gagal memuat agent graph: {exc}",
-            _EMPTY, _EMPTY, _EMPTY,
-        )
+        _log(f"❌ Gagal memuat agent graph: `{exc}`")
+        yield _yield_progress()
         return
 
-    # ---- stream graph execution ---------------------------------------------
+    # ── stream graph execution ────────────────────────────────────────────────
     # stream_mode="values" yields the full cumulative state after each step.
-    # Track message count to yield only newly appended messages.
+    # We track prev_msg_count to log only newly appended messages per step.
     final_state: dict | None = None
     prev_msg_count = 0
+    step_count = 0
+
     try:
         for step in graph.stream(
             initial_state, {"recursion_limit": 25}, stream_mode="values"
@@ -208,75 +431,95 @@ def analyze(
             msgs = step.get("messages") or []
             for msg in msgs[prev_msg_count:]:
                 name = getattr(msg, "name", None) or "supervisor"
-                content = (msg.content or "")[:300]
-                yield (f"{_LOADING} `[{name}]` {content}", _EMPTY, _EMPTY, _EMPTY)
+                icon = _AGENT_ICONS.get(name, "🔄")
+                content = (msg.content or "")[:200].replace("\n", " ")
+                _log(f"{icon} **[{name}]** {content}")
+                step_count += 1
             prev_msg_count = len(msgs)
             final_state = step
+            yield _yield_progress()
+
     except Exception as exc:
-        yield (
-            f"❌ Error saat menjalankan agent: {exc}",
-            _EMPTY, _EMPTY, _EMPTY,
-        )
+        _log(f"❌ Error saat menjalankan agent: `{exc}`")
+        yield _yield_progress()
         return
 
-    # ---- render final report ------------------------------------------------
+    # ── render final report ───────────────────────────────────────────────────
     report = (final_state or {}).get("risk_report")
+    financials = (final_state or {}).get("financials")
+
     if not report:
-        yield (
+        _log(
             "❌ Laporan risiko tidak berhasil dibuat. "
-            "Pastikan API key LLM sudah dikonfigurasi di `.env`.",
-            _EMPTY, _EMPTY, _EMPTY,
+            "Pastikan API key LLM sudah dikonfigurasi di `.env`."
         )
+        yield _yield_progress()
         return
+
+    ts2 = datetime.now().strftime("%H:%M:%S")
+    _log(
+        f"✅ **Analisis selesai** · {step_count} langkah · {ts2} "
+        f"· overall risk: **{(report.get('overall_risk') or '?').upper()}**"
+    )
 
     yield (
-        _format_summary(report, ticker),
-        _format_ratios(report),
+        _get_log(),
+        _format_summary(report, ticker, financials),
+        _format_ratios(report, financials),
         _format_flags(report),
         _format_positives(report),
     )
 
 
-# --------------------------------------------------------------------------- #
+# ─────────────────────────────────────────────────────────────────────────────
 # Gradio Blocks layout
-# --------------------------------------------------------------------------- #
+# ─────────────────────────────────────────────────────────────────────────────
 
-_DESCRIPTION = """
+_DESCRIPTION = """\
 **LangGraph multi-agent system** yang menganalisis risiko keuangan perusahaan
-IDX secara otomatis:
+IDX listed secara otomatis — gratis, open-source, Bahasa Indonesia.
 
-1. **Financial Agent** — fundamental yfinance (.JK) + rasio keuangan
-2. **News Agent** — berita terbaru (DuckDuckGo)
-3. **Document Agent** — parsing laporan keuangan PDF (Docling, table-aware)
-4. **Risk Analyst** — sintesis semua data → laporan risiko terstruktur (Bahasa Indonesia)
+| Agent | Tugas |
+|---|---|
+| 📊 **Financial Agent** | Fundamental yfinance `.JK` + 10 rasio keuangan |
+| 📰 **News Agent** | ReAct tool-calling: cari & sintesis berita terbaru |
+| 📄 **Document Agent** | Parse laporan keuangan PDF (Docling, table-aware) |
+| 🧠 **Risk Analyst** | Sintesis semua data → laporan risiko terstruktur |
 
-> ⚠️ *Bukan saran investasi — demonstrasi teknikal portofolio.*
+> ⚠️ *Bukan saran investasi — demonstrasi portofolio teknikal.*
 """
 
 _EXAMPLES = [
     ["BBRI", None],
+    ["BBCA", None],
     ["TLKM", None],
     ["ASII", None],
     ["GOTO", None],
+    ["UNVR", None],
 ]
 
 
 def build_demo() -> gr.Blocks:
     with gr.Blocks(
         title="🇮🇩 Indonesian Financial Research Agent",
-        theme=gr.themes.Soft(),
-        css=".output-markdown { font-size: 0.95rem; }",
+        theme=gr.themes.Soft(
+            primary_hue=gr.themes.colors.blue,
+            secondary_hue=gr.themes.colors.slate,
+            font=[gr.themes.GoogleFont("Inter"), "ui-sans-serif", "sans-serif"],
+        ),
+        css=_CSS,
     ) as demo:
 
         gr.Markdown("# 🇮🇩 Indonesian Financial Research Agent")
         gr.Markdown(_DESCRIPTION)
 
-        with gr.Row():
-            # ---- left panel: inputs ----------------------------------------
+        with gr.Row(equal_height=False):
+
+            # ── Left panel: inputs ────────────────────────────────────────────
             with gr.Column(scale=1, min_width=280):
                 ticker_input = gr.Textbox(
                     label="Kode Saham BEI",
-                    placeholder="Contoh: BBRI",
+                    placeholder="Contoh: BBRI, TLKM, ASII",
                     max_lines=1,
                     autofocus=True,
                 )
@@ -290,13 +533,14 @@ def build_demo() -> gr.Blocks:
                 )
 
                 gr.Markdown("""
+---
 **Cara penggunaan:**
 1. Ketik kode saham BEI (tanpa `.JK`)
-2. *Opsional:* upload PDF laporan keuangan tahunan dari
+2. *Opsional:* upload PDF laporan keuangan dari
    [IDX](https://www.idx.co.id/en/listed-companies/financial-statements-and-annual-report)
-3. Klik **Analisis Risiko**
+3. Klik **Analisis Risiko** atau tekan **Enter**
 
-**Diperlukan:** minimal satu API key di `.env`:
+**Minimal 1 API key di `.env`:**
 ```
 GROQ_API_KEY=...     # gratis, direkomendasikan
 GOOGLE_API_KEY=...   # Gemini 2.0 Flash
@@ -306,53 +550,71 @@ GOOGLE_API_KEY=...   # Gemini 2.0 Flash
                 gr.Examples(
                     examples=_EXAMPLES,
                     inputs=[ticker_input, pdf_input],
-                    label="Contoh ticker",
+                    label="Contoh ticker IDX",
                 )
 
-            # ---- right panel: outputs --------------------------------------
+            # ── Right panel: progress log + result tabs ───────────────────────
             with gr.Column(scale=2):
+
+                # Progress log — updates live during streaming
+                gr.Markdown("### 📋 Log Analisis")
+                progress_md = gr.Markdown(
+                    value=(
+                        "*Siap menganalisis. Masukkan kode saham dan klik "
+                        "**Analisis Risiko**.*"
+                    ),
+                    elem_classes=["progress-log"],
+                )
+
+                gr.Markdown("---")
+
+                # Report tabs — fill in when analysis completes
                 with gr.Tabs():
-                    with gr.Tab("📊 Ringkasan Risiko"):
+                    with gr.Tab("📊 Ringkasan"):
                         summary_out = gr.Markdown(
-                            label="Ringkasan",
-                            value="*Hasil analisis akan muncul di sini...*",
-                            elem_classes=["output-markdown"],
+                            value=(
+                                "*Hasil analisis akan muncul di sini setelah "
+                                "analisis selesai.*"
+                            ),
+                            elem_classes=["output-md"],
                         )
                     with gr.Tab("📈 Rasio Keuangan"):
                         ratios_out = gr.Markdown(
                             value="",
-                            elem_classes=["output-markdown"],
+                            elem_classes=["output-md"],
                         )
                     with gr.Tab("⚠️ Risk Flags"):
                         flags_out = gr.Markdown(
                             value="",
-                            elem_classes=["output-markdown"],
+                            elem_classes=["output-md"],
                         )
                     with gr.Tab("✅ Positif & Sumber"):
                         positives_out = gr.Markdown(
                             value="",
-                            elem_classes=["output-markdown"],
+                            elem_classes=["output-md"],
                         )
+
+        _outputs = [progress_md, summary_out, ratios_out, flags_out, positives_out]
 
         analyze_btn.click(
             fn=analyze,
             inputs=[ticker_input, pdf_input],
-            outputs=[summary_out, ratios_out, flags_out, positives_out],
-            show_progress="full",
+            outputs=_outputs,
+            show_progress="hidden",   # we have our own log
         )
-
         ticker_input.submit(
             fn=analyze,
             inputs=[ticker_input, pdf_input],
-            outputs=[summary_out, ratios_out, flags_out, positives_out],
-            show_progress="full",
+            outputs=_outputs,
+            show_progress="hidden",
         )
 
         gr.Markdown("""
 ---
-Built with LangGraph · yfinance · Docling · Groq
+Built with **LangGraph** · **yfinance** · **Docling** · **Groq** · **Gradio** &nbsp;|&nbsp;
 [GitHub](https://github.com/Fikri645/indo-financial-agent) ·
-[Hugging Face](https://huggingface.co/fikri0o0)
+[Hugging Face](https://huggingface.co/fikri0o0) &nbsp;|&nbsp;
+MIT © 2026 Muhammad Fikri Wahidin
 """)
 
     return demo
