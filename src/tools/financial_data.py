@@ -146,10 +146,15 @@ def fetch_financials(ticker: str) -> CompanyFinancials:
     ratios = compute_ratios(balance_sheet, income_stmt)
 
     period_end = None
+    prior_period_end = None
     if balance_sheet is not None and not balance_sheet.empty:
         period_end = str(balance_sheet.columns[0].date()) if hasattr(
             balance_sheet.columns[0], "date"
         ) else str(balance_sheet.columns[0])
+        if balance_sheet.shape[1] > 1:
+            prior_period_end = str(balance_sheet.columns[1].date()) if hasattr(
+                balance_sheet.columns[1], "date"
+            ) else str(balance_sheet.columns[1])
 
     raw_sector = info.get("sector")
     raw_industry = info.get("industry")
@@ -161,6 +166,7 @@ def fetch_financials(ticker: str) -> CompanyFinancials:
         sector=classify_sector(raw_sector, raw_industry),
         industry=raw_industry,
         period_end=period_end,
+        prior_period_end=prior_period_end,
         ratios=ratios,
         total_revenue=_first_row(income_stmt, _IS_ALIASES["total_revenue"]),
         net_income=_first_row(income_stmt, _IS_ALIASES["net_income"]),

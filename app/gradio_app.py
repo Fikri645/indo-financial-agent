@@ -229,9 +229,29 @@ def _format_ratios(report: dict, financials: dict | None = None) -> str:
     ratios = report.get("key_ratios") or {}
     sector = (financials or {}).get("sector", "general")
     period_end = (financials or {}).get("period_end") or ""
+    prior_period_end = (financials or {}).get("prior_period_end") or ""
     currency = (financials or {}).get("currency") or ""
     parts: list[str] = []
     has_any = False
+
+    # Per-group period description (shown as subheading note under each group)
+    # Balance sheet items: point-in-time snapshot at period_end
+    # Income stmt items: cumulative for the full fiscal year ending period_end
+    # Growth: YoY comparison between period_end and prior_period_end
+    fy_label = f"FY {period_end}" if period_end else "FY terakhir"
+    if period_end and prior_period_end:
+        growth_label = f"YoY {prior_period_end} → {period_end}"
+    elif period_end:
+        growth_label = f"YoY (dua FY terakhir, berakhir {period_end})"
+    else:
+        growth_label = "YoY dua tahun fiskal terakhir"
+
+    _GROUP_PERIOD: dict[str, str] = {
+        "💧 Likuiditas": f"Posisi neraca per **{period_end}** (tahunan / annual)",
+        "⚖️ Leverage / Solvabilitas": f"Posisi neraca per **{period_end}** (tahunan / annual)",
+        "💰 Profitabilitas": f"Akumulasi seluruh tahun fiskal **{fy_label}** (annual)",
+        "📈 Pertumbuhan YoY": f"**{growth_label}** (perbandingan dua laporan tahunan)",
+    }
 
     for group_title, fields in _RATIO_GROUPS:
         rows: list[str] = []
@@ -252,20 +272,26 @@ def _format_ratios(report: dict, financials: dict | None = None) -> str:
                 f"| {bench_str} | {status} |"
             )
         if rows:
+            period_note_str = _GROUP_PERIOD.get(group_title, "")
+            period_inline = (
+                f"\n*{period_note_str}*\n" if period_note_str else "\n"
+            )
             header = "| Metrik | Nilai | Benchmark | Status |\n|---|---:|---|:---:|"
-            parts.append(f"### {group_title}\n\n{header}\n" + "\n".join(rows))
+            parts.append(
+                f"### {group_title}{period_inline}\n{header}\n" + "\n".join(rows)
+            )
 
     if not has_any:
         return "*Data rasio keuangan tidak tersedia.*"
 
-    # Period context note
-    period_parts: list[str] = []
+    # Top-level context block
+    ctx_parts: list[str] = []
     if period_end:
-        period_parts.append(f"📅 **Data per:** {period_end}")
+        ctx_parts.append(f"📅 Laporan tahunan (Annual Report) · berakhir **{period_end}**")
     if currency:
-        period_parts.append(f"💱 Mata uang: **{currency}**")
-    period_parts.append("🔗 Sumber: **yfinance** (laporan keuangan resmi BEI)")
-    period_note = "> " + " &nbsp;·&nbsp; ".join(period_parts)
+        ctx_parts.append(f"💱 **{currency}**")
+    ctx_parts.append("🔗 Sumber: **yfinance**")
+    ctx_note = "> " + " &nbsp;·&nbsp; ".join(ctx_parts)
 
     if sector == "financial":
         bank_note = (
@@ -273,9 +299,9 @@ def _format_ratios(report: dict, financials: dict | None = None) -> str:
             "tinggi adalah **normal** — simpanan nasabah dicatat sebagai liabilitas. "
             "Current Ratio dan DER tidak menjadi patokan risiko untuk sektor ini."
         )
-        return period_note + "\n\n" + "\n\n".join(parts) + bank_note
+        return ctx_note + "\n\n" + "\n\n".join(parts) + bank_note
 
-    return period_note + "\n\n" + "\n\n".join(parts)
+    return ctx_note + "\n\n" + "\n\n".join(parts)
 
 
 def _format_flags(report: dict, financials: dict | None = None) -> str:
@@ -301,10 +327,10 @@ def _format_flags(report: dict, financials: dict | None = None) -> str:
         evidence = f.get("evidence", "")
         source = f.get("source", "")
 
-        # Show data period for yfinance-sourced flags
+        # Show data period for yfinance-sourced flags (annual report date)
         period_badge = (
             f'<span style="background:#e2e8f0;color:#334155;padding:1px 6px;'
-            f'border-radius:4px;font-size:0.85em;margin-left:6px;">per {period_end}</span>'
+            f'border-radius:4px;font-size:0.85em;margin-left:6px;">FY {period_end}</span>'
             if period_end and source and "yfinance" in source else ""
         )
         source_badge = (
@@ -350,11 +376,11 @@ def _format_positives(report: dict, financials: dict | None = None) -> str:
         )
 
     if sources:
-        period_suffix = f" — data per **{period_end}**" if period_end else ""
+        fy_suffix = f" berakhir **{period_end}**" if period_end else ""
         _src_desc = {
-            "yfinance":             f"data fundamental & rasio keuangan (TTM/FY){period_suffix}",
+            "yfinance":             f"laporan keuangan tahunan (Annual Report{fy_suffix}) — neraca & laba rugi FY",
             "news_search":          f"pencarian berita terkini (diambil: {fetch_date})",
-            "financial_report_pdf": "laporan keuangan / annual report PDF (upload manual)",
+            "financial_report_pdf": "laporan keuangan PDF (upload manual — kuartalan/tahunan sesuai file)",
         }
         src_lines = []
         for s in sources:
