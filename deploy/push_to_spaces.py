@@ -39,10 +39,22 @@ api.upload_folder(
         "data/vectorstore/*", "data/pdfs/*", "reports/*", "notebooks",
         # secrets
         ".env",
-        # project README — Space README uploaded separately below
-        "README.md",
+        # uploaded separately below (Space needs different content):
+        "README.md",       # Space README has YAML frontmatter
+        "requirements.txt",  # Space uses lightweight requirements-spaces.txt
     ],
     commit_message=COMMIT_MSG,
+)
+
+# Upload lightweight requirements (no docling/sentence-transformers/torch).
+# The document_node degrades gracefully — the core pipeline works fully.
+print("Uploading requirements-spaces.txt as requirements.txt ...")
+api.upload_file(
+    repo_id=REPO_ID,
+    repo_type="space",
+    path_or_fileobj=(ROOT / "requirements-spaces.txt").read_bytes(),
+    path_in_repo="requirements.txt",
+    commit_message=f"{COMMIT_MSG} [requirements]",
 )
 
 print("Uploading Space README (with YAML frontmatter) ...")
