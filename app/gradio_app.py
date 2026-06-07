@@ -401,8 +401,12 @@ def analyze(
     def _get_log() -> str:
         return "\n\n".join(log_lines)
 
+    _LOADING_SUMMARY = (
+        "*⏳ Menganalisis... hasil akan tampil setelah semua agen selesai.*"
+    )
+
     def _yield_progress() -> tuple[str, str, str, str, str]:
-        return (_get_log(), _EMPTY, _EMPTY, _EMPTY, _EMPTY)
+        return (_get_log(), _LOADING_SUMMARY, _EMPTY, _EMPTY, _EMPTY)
 
     ts = datetime.now().strftime("%H:%M:%S")
     _log(f"**{ts}** — Memulai analisis **{ticker}**"
@@ -451,9 +455,9 @@ def analyze(
     if not report:
         _log(
             "❌ Laporan risiko tidak berhasil dibuat. "
-            "Pastikan API key LLM sudah dikonfigurasi di `.env`."
+            "Pastikan GROQ_API_KEY atau GOOGLE_API_KEY sudah dikonfigurasi."
         )
-        yield _yield_progress()
+        yield (_get_log(), _EMPTY, _EMPTY, _EMPTY, _EMPTY)
         return
 
     ts2 = datetime.now().strftime("%H:%M:%S")
@@ -462,13 +466,36 @@ def analyze(
         f"· overall risk: **{(report.get('overall_risk') or '?').upper()}**"
     )
 
-    yield (
-        _get_log(),
-        _format_summary(report, ticker, financials),
-        _format_ratios(report, financials),
-        _format_flags(report),
-        _format_positives(report),
-    )
+    # Wrap format functions individually so a rendering error doesn't
+    # silently drop the entire result (Gradio stops the generator on exception).
+    try:
+        summary_md = _format_summary(report, ticker, financials)
+    except Exception as exc:
+        summary_md = (
+            f"**{ticker}** — Risk: **{(report.get('overall_risk') or '?').upper()}**\n\n"
+            f"{report.get('summary', '')}\n\n"
+            f"*(rendering error: {exc})*"
+        )
+
+    try:
+        ratios_md = _format_ratios(report, financials)
+    except Exception as exc:
+        ratios_md = f"*(rendering error: {exc})*"
+
+    try:
+        flags_md = _format_flags(report)
+    except Exception as exc:
+        flags_md = "\n".join(
+            f"- [{f.get('severity','?').upper()}] {f.get('finding','')}"
+            for f in (report.get("flags") or [])
+        ) or f"*(rendering error: {exc})*"
+
+    try:
+        positives_md = _format_positives(report)
+    except Exception as exc:
+        positives_md = f"*(rendering error: {exc})*"
+
+    yield (_get_log(), summary_md, ratios_md, flags_md, positives_md)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -539,12 +566,6 @@ def build_demo() -> gr.Blocks:
 2. *Opsional:* upload PDF laporan keuangan dari
    [IDX](https://www.idx.co.id/en/listed-companies/financial-statements-and-annual-report)
 3. Klik **Analisis Risiko** atau tekan **Enter**
-
-**Minimal 1 API key di `.env`:**
-```
-GROQ_API_KEY=...     # gratis, direkomendasikan
-GOOGLE_API_KEY=...   # Gemini 2.0 Flash
-```
 """)
 
                 gr.Examples(
@@ -600,7 +621,7 @@ GOOGLE_API_KEY=...   # Gemini 2.0 Flash
             fn=analyze,
             inputs=[ticker_input, pdf_input],
             outputs=_outputs,
-            show_progress="hidden",   # we have our own log
+            show_progress="minimal",
         )
         ticker_input.submit(
             fn=analyze,
