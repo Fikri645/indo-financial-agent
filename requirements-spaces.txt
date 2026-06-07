@@ -1,8 +1,12 @@
-# Lightweight requirements for Hugging Face Spaces deployment.
-# Heavy ML deps (docling, sentence-transformers, chromadb) are excluded:
-#   - PDF parsing (document_node) degrades gracefully to empty chunks
-#   - Dense retrieval falls back to BM25-only
-# Core pipeline (yfinance → risk ratios → news → LLM synthesis) works fully.
+# Requirements for Hugging Face Spaces deployment.
+# Uses docling for PDF parsing but with a lightweight pipeline (no OCR, no
+# TableFormer ML model) — IDX annual reports are digital PDFs so text is
+# embedded; the fast path is sufficient and avoids downloading 1-2 GB models.
+# Dense retrieval (sentence-transformers, chromadb) is excluded; DocumentStore
+# falls back gracefully to BM25-only retrieval.
+
+# --- PDF parsing ---
+docling>=2.0.0
 
 # --- Agent orchestration ---
 langgraph>=0.2.50

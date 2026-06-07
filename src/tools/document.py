@@ -48,16 +48,47 @@ def detect_section(text: str) -> str:
 def parse_pdf(pdf_path: str | Path) -> str:
     """Convert a PDF to Markdown using Docling (layout + table aware).
 
-    Docling's TableFormer recovers the merged-cell financial tables that
-    pdfplumber mangles. Returns Markdown text.
+    On HF Spaces (detected via ``SPACE_ID`` env var) a lightweight pipeline
+    is used: OCR and TableFormer are disabled.  IDX annual reports are digital
+    PDFs so text is already embedded — the fast path is sufficient and avoids
+    downloading the 1-2 GB ML model files on first use.
+
+    On local deployments the full pipeline runs (TableFormer recovers the
+    merged-cell financial tables that pdfplumber mangles).
     """
+    import os
+
     from docling.document_converter import DocumentConverter  # local import
 
     pdf_path = Path(pdf_path)
     if not pdf_path.exists():
         raise FileNotFoundError(f"PDF not found: {pdf_path}")
 
-    converter = DocumentConverter()
+    if os.getenv("SPACE_ID"):
+        # HF Spaces free tier: use fast, model-free pipeline.
+        try:
+            from docling.datamodel.base_models import InputFormat
+            from docling.datamodel.pipeline_options import PdfPipelineOptions
+            from docling.document_converter import PdfFormatOption
+
+            pipeline_options = PdfPipelineOptions(
+                do_ocr=False,           # text is embedded in digital PDFs
+                do_table_structure=False,  # skip TableFormer ML model
+            )
+            converter = DocumentConverter(
+                format_options={
+                    InputFormat.PDF: PdfFormatOption(
+                        pipeline_options=pipeline_options
+                    )
+                }
+            )
+        except Exception:
+            # API may differ across docling versions — fall back to default.
+            converter = DocumentConverter()
+    else:
+        # Local: full pipeline with TableFormer for accurate table extraction.
+        converter = DocumentConverter()
+
     result = converter.convert(str(pdf_path))
     return result.document.export_to_markdown()
 
