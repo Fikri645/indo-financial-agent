@@ -67,4 +67,4 @@ api.upload_file(
     commit_message=f"{COMMIT_MSG} [README]",
 )
 
-print(f"\n✅ Done — https://huggingface.co/spaces/{REPO_ID}")
+print(f"\nDone: https://huggingface.co/spaces/{REPO_ID}")
