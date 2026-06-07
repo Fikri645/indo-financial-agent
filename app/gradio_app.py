@@ -191,7 +191,7 @@ def _format_summary(
 
     num_flags = len(report.get("flags") or [])
     flags_summary = (
-        f"&nbsp;·&nbsp; <strong>{num_flags} flag risiko</strong>"
+        f"&nbsp;·&nbsp; <strong style='color:#1e293b;'>{num_flags} flag risiko</strong>"
         if num_flags else "&nbsp;·&nbsp; ✅ tidak ada flag risiko"
     )
 
@@ -209,15 +209,15 @@ def _format_summary(
         f'</div>'
         # company heading
         f'<h2 style="margin:0 0 2px;color:#1e293b;font-size:1.3em;">'
-        f'{company} <span style="color:#94a3b8;font-weight:400;font-size:0.75em;">'
+        f'{company} <span style="color:#475569;font-weight:400;font-size:0.75em;">'
         f'({ticker.upper()}{period_str})</span>'
         f'</h2>'
         f'{industry_str}'
         # metrics
         f'{metrics_html}'
         # footer meta
-        f'<div style="font-size:0.78em;color:#94a3b8;margin-top:8px;">'
-        f'Overall risk: <strong>{risk_val.upper()}</strong>{flags_summary}'
+        f'<div style="font-size:0.78em;color:#475569;margin-top:8px;">'
+        f'Overall risk: <strong style="color:{accent};">{risk_val.upper()}</strong>{flags_summary}'
         f'</div>'
         f'</div>'
     )
@@ -228,6 +228,8 @@ def _format_summary(
 def _format_ratios(report: dict, financials: dict | None = None) -> str:
     ratios = report.get("key_ratios") or {}
     sector = (financials or {}).get("sector", "general")
+    period_end = (financials or {}).get("period_end") or ""
+    currency = (financials or {}).get("currency") or ""
     parts: list[str] = []
     has_any = False
 
@@ -256,18 +258,29 @@ def _format_ratios(report: dict, financials: dict | None = None) -> str:
     if not has_any:
         return "*Data rasio keuangan tidak tersedia.*"
 
+    # Period context note
+    period_parts: list[str] = []
+    if period_end:
+        period_parts.append(f"📅 **Data per:** {period_end}")
+    if currency:
+        period_parts.append(f"💱 Mata uang: **{currency}**")
+    period_parts.append("🔗 Sumber: **yfinance** (laporan keuangan resmi BEI)")
+    period_note = "> " + " &nbsp;·&nbsp; ".join(period_parts)
+
     if sector == "financial":
-        parts.append(
+        bank_note = (
             "\n> 💡 **Catatan Bank:** Untuk lembaga keuangan, Debt-to-Equity (DER) yang "
             "tinggi adalah **normal** — simpanan nasabah dicatat sebagai liabilitas. "
             "Current Ratio dan DER tidak menjadi patokan risiko untuk sektor ini."
         )
+        return period_note + "\n\n" + "\n\n".join(parts) + bank_note
 
-    return "\n\n".join(parts)
+    return period_note + "\n\n" + "\n\n".join(parts)
 
 
-def _format_flags(report: dict) -> str:
+def _format_flags(report: dict, financials: dict | None = None) -> str:
     flags = report.get("flags") or []
+    period_end = (financials or {}).get("period_end") or ""
     if not flags:
         return (
             '<div style="background:#f0fdf4;border:1px solid #86efac;border-radius:10px;'
@@ -288,6 +301,18 @@ def _format_flags(report: dict) -> str:
         evidence = f.get("evidence", "")
         source = f.get("source", "")
 
+        # Show data period for yfinance-sourced flags
+        period_badge = (
+            f'<span style="background:#e2e8f0;color:#334155;padding:1px 6px;'
+            f'border-radius:4px;font-size:0.85em;margin-left:6px;">per {period_end}</span>'
+            if period_end and source and "yfinance" in source else ""
+        )
+        source_badge = (
+            f'<span style="background:#1e293b;color:#f1f5f9;padding:1px 7px;'
+            f'border-radius:4px;font-size:0.85em;margin-left:4px;">{source}</span>'
+            if source else ""
+        )
+
         parts.append(
             f'<div style="background:{bg};border-left:5px solid {col};'
             f'border-radius:0 10px 10px 0;padding:14px 18px;margin:14px 0;">'
@@ -296,10 +321,11 @@ def _format_flags(report: dict) -> str:
             f'border-radius:10px;font-size:0.78em;font-weight:bold;">{sev_label}</span>'
             f'<strong style="color:#1e293b;font-size:0.97em;">{cat}</strong>'
             f'</div>'
-            f'<p style="margin:0 0 8px;color:#1e293b;line-height:1.6;">{finding}</p>'
-            f'<div style="font-size:0.82em;color:#334155;">'
-            f'📊 <em>{evidence}</em>'
-            f'{f"&nbsp;&nbsp;·&nbsp;&nbsp;🔗 <code>{source}</code>" if source else ""}'
+            f'<p style="margin:0 0 10px;color:#1e293b;line-height:1.6;">{finding}</p>'
+            f'<div style="font-family:monospace;font-size:0.84em;color:#1e293b;'
+            f'background:rgba(0,0,0,0.07);border-radius:6px;padding:6px 10px;">'
+            f'📊 {evidence}'
+            f'&nbsp; 🔗{source_badge}{period_badge}'
             f'</div>'
             f'</div>'
         )
@@ -307,9 +333,11 @@ def _format_flags(report: dict) -> str:
     return "\n".join(parts)
 
 
-def _format_positives(report: dict) -> str:
+def _format_positives(report: dict, financials: dict | None = None) -> str:
     positives = report.get("positives") or []
     sources = report.get("sources") or []
+    period_end = (financials or {}).get("period_end") or ""
+    fetch_date = datetime.now().strftime("%d %b %Y")
     parts: list[str] = []
 
     if positives:
@@ -322,16 +350,22 @@ def _format_positives(report: dict) -> str:
         )
 
     if sources:
+        period_suffix = f" — data per **{period_end}**" if period_end else ""
         _src_desc = {
-            "yfinance":             "data fundamental & rasio keuangan",
-            "news_search":          "pencarian berita terkini",
-            "financial_report_pdf": "laporan keuangan / annual report PDF",
+            "yfinance":             f"data fundamental & rasio keuangan (TTM/FY){period_suffix}",
+            "news_search":          f"pencarian berita terkini (diambil: {fetch_date})",
+            "financial_report_pdf": "laporan keuangan / annual report PDF (upload manual)",
         }
         src_lines = []
         for s in sources:
             desc = next((v for k, v in _src_desc.items() if k in s.lower()), "")
             src_lines.append(f"- `{s}`" + (f" — {desc}" if desc else ""))
         parts.append("## 📚 Sumber Data\n\n" + "\n".join(src_lines))
+        parts.append(
+            "> ⚠️ *Data yfinance menggunakan laporan keuangan terbaru yang tersedia "
+            "(Trailing Twelve Months atau fiscal year terakhir). "
+            "Untuk data intraday atau real-time, gunakan sumber resmi BEI / Bloomberg.*"
+        )
 
     return "\n\n".join(parts)
 
@@ -483,7 +517,7 @@ def analyze(
         ratios_md = f"*(rendering error: {exc})*"
 
     try:
-        flags_md = _format_flags(report)
+        flags_md = _format_flags(report, financials)
     except Exception as exc:
         flags_md = "\n".join(
             f"- [{f.get('severity','?').upper()}] {f.get('finding','')}"
@@ -491,7 +525,7 @@ def analyze(
         ) or f"*(rendering error: {exc})*"
 
     try:
-        positives_md = _format_positives(report)
+        positives_md = _format_positives(report, financials)
     except Exception as exc:
         positives_md = f"*(rendering error: {exc})*"
 
