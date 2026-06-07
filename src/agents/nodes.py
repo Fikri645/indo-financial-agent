@@ -168,7 +168,15 @@ def document_node(state: AgentState) -> dict:
     except Exception as exc:
         logger.warning("document_node error: %s", exc)
         chunks = []
-        summary = f"Gagal parsing PDF {pdf_path}: {exc}"
+        exc_str = str(exc)
+        if "No module named" in exc_str and "docling" in exc_str.lower():
+            summary = (
+                "PDF parsing dilewati — Docling tidak terinstall di environment ini. "
+                "Analisis tetap berjalan menggunakan data fundamental + berita. "
+                "Untuk parsing PDF penuh, jalankan secara lokal."
+            )
+        else:
+            summary = f"Gagal parsing PDF: {exc}"
 
     return {
         "doc_chunks": chunks,

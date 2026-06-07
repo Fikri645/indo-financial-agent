@@ -296,10 +296,10 @@ def _format_flags(report: dict) -> str:
             f'border-radius:10px;font-size:0.78em;font-weight:bold;">{sev_label}</span>'
             f'<strong style="color:#1e293b;font-size:0.97em;">{cat}</strong>'
             f'</div>'
-            f'<p style="margin:0 0 8px;color:#374151;line-height:1.6;">{finding}</p>'
-            f'<div style="font-size:0.82em;color:#6b7280;">'
+            f'<p style="margin:0 0 8px;color:#1e293b;line-height:1.6;">{finding}</p>'
+            f'<div style="font-size:0.82em;color:#334155;">'
             f'📊 <em>{evidence}</em>'
-            f'{f"&nbsp;·&nbsp;🔗 <code>{source}</code>" if source else ""}'
+            f'{f"&nbsp;&nbsp;·&nbsp;&nbsp;🔗 <code>{source}</code>" if source else ""}'
             f'</div>'
             f'</div>'
         )
@@ -554,6 +554,12 @@ def build_demo() -> gr.Blocks:
                     label="📄 Laporan Keuangan PDF (Opsional)",
                     file_types=[".pdf"],
                     file_count="single",
+                )
+                gr.Markdown(
+                    "*ℹ️ PDF parsing membutuhkan Docling — "
+                    "berjalan penuh saat [deployment lokal]"
+                    "(https://github.com/Fikri645/indo-financial-agent).*",
+                    elem_classes=["output-md"],
                 )
                 analyze_btn = gr.Button(
                     "🔍 Analisis Risiko", variant="primary", size="lg"
