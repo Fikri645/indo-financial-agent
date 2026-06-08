@@ -100,6 +100,12 @@ _CSS = """
 
 /* Thinner divider */
 hr { margin: 12px 0 !important; opacity: 0.3; }
+
+/* Quarterly checkbox — remove Gradio block background/border */
+#quarterly-cb { background: transparent !important;
+                border: none !important;
+                box-shadow: none !important;
+                padding: 2px 0 !important; }
 """
 
 
@@ -548,10 +554,7 @@ def analyze(
     # ── input validation ──────────────────────────────────────────────────────
     ticker = (ticker or "").strip().upper()
     if not ticker:
-        yield (
-            "❌ Masukkan kode saham BEI (contoh: BBRI).",
-            _EMPTY, _EMPTY, _EMPTY, _EMPTY, gr.update(visible=False),
-        )
+        yield ("❌ Masukkan kode saham BEI (contoh: BBRI).", _EMPTY, _EMPTY, _EMPTY, _EMPTY, None)
         return
 
     pdf_path = _pdf_path(pdf_file)
@@ -587,7 +590,7 @@ def analyze(
     mode_label = "kuartalan" if use_quarterly else "tahunan"
 
     def _yield_progress() -> tuple:
-        return (_get_log(), _LOADING_SUMMARY, _EMPTY, _EMPTY, _EMPTY, gr.update(visible=False))
+        return (_get_log(), _LOADING_SUMMARY, _EMPTY, _EMPTY, _EMPTY, None)
 
     ts = datetime.now().strftime("%H:%M:%S")
     _log(f"**{ts}** — Memulai analisis **{ticker}** [{mode_label}]"
@@ -638,7 +641,7 @@ def analyze(
             "❌ Laporan risiko tidak berhasil dibuat. "
             "Pastikan GROQ_API_KEY atau GOOGLE_API_KEY sudah dikonfigurasi."
         )
-        yield (_get_log(), _EMPTY, _EMPTY, _EMPTY, _EMPTY, gr.update(visible=False))
+        yield (_get_log(), _EMPTY, _EMPTY, _EMPTY, _EMPTY, None)
         return
 
     ts2 = datetime.now().strftime("%H:%M:%S")
@@ -691,11 +694,7 @@ def analyze(
     except Exception:
         pass  # export failure is non-critical
 
-    export_update = (
-        gr.update(value=export_path, visible=True)
-        if export_path else gr.update(visible=False)
-    )
-    yield (_get_log(), summary_md, ratios_md, flags_md, positives_md, export_update)
+    yield (_get_log(), summary_md, ratios_md, flags_md, positives_md, export_path)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -759,7 +758,7 @@ def build_demo() -> gr.Blocks:
                     label="📅 Gunakan data kuartalan (quarterly)",
                     value=False,
                     info="Default: laporan tahunan (annual). Centang untuk data kuartal terbaru.",
-                    container=False,
+                    elem_id="quarterly-cb",
                 )
                 gr.Markdown(
                     "*ℹ️ PDF parsing membutuhkan Docling — "
@@ -827,11 +826,12 @@ def build_demo() -> gr.Blocks:
                             elem_classes=["output-md"],
                         )
 
-                export_out = gr.File(
+                export_out = gr.DownloadButton(
                     label="📥 Download Laporan (.md)",
-                    file_count="single",
-                    interactive=False,
-                    visible=False,  # hidden until analysis produces a file
+                    value=None,
+                    variant="secondary",
+                    size="sm",
+                    visible=True,
                 )
 
         _inputs = [ticker_input, pdf_input, quarterly_toggle]
