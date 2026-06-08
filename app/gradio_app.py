@@ -394,9 +394,14 @@ def _format_positives(report: dict, financials: dict | None = None) -> str:
     if sources:
         fy_suffix = f" berakhir **{period_end}**" if period_end else ""
         _src_desc = {
-            "yfinance":             f"laporan keuangan tahunan (Annual Report{fy_suffix}) — neraca & laba rugi FY",
-            "news_search":          f"pencarian berita terkini (diambil: {fetch_date})",
-            "financial_report_pdf": "laporan keuangan PDF (upload manual — kuartalan/tahunan sesuai file)",
+            "yfinance": (
+                f"laporan keuangan tahunan (Annual Report{fy_suffix})"
+                " — neraca & laba rugi FY"
+            ),
+            "news_search": f"pencarian berita terkini (diambil: {fetch_date})",
+            "financial_report_pdf": (
+                "laporan keuangan PDF (upload manual — kuartalan/tahunan sesuai file)"
+            ),
         }
         src_lines = []
         for s in sources:
@@ -563,7 +568,10 @@ def analyze(
     # ── input validation ──────────────────────────────────────────────────────
     ticker = (ticker or "").strip().upper()
     if not ticker:
-        yield ("❌ Masukkan kode saham BEI (contoh: BBRI).", _EMPTY, _EMPTY, _EMPTY, _EMPTY, gr.update())
+        yield (
+            "❌ Masukkan kode saham BEI (contoh: BBRI).",
+            _EMPTY, _EMPTY, _EMPTY, _EMPTY, gr.update(),
+        )
         return
 
     pdf_path = _pdf_path(pdf_file)
