@@ -1,7 +1,10 @@
 """LangGraph StateGraph — Indonesian Financial Research Agent.
 
-The supervisor node deterministically routes through four specialist nodes:
-  financial_agent → news_agent → document_agent (if PDF) → risk_analyst → END
+The supervisor node deterministically routes through:
+  data_gather_agent (financial + news in parallel)
+    → document_agent (only when a PDF is provided)
+    → risk_analyst
+    → END
 
 The only LLM call is in risk_analyst_node, which synthesises all collected
 evidence into a validated RiskReport (Pydantic structured output).
@@ -27,8 +30,7 @@ from langgraph.graph import END, START, StateGraph
 
 from src.agents.nodes import (
     document_node,
-    financial_node,
-    news_node,
+    parallel_data_node,
     risk_analyst_node,
     supervisor_node,
 )
@@ -41,7 +43,7 @@ logger = logging.getLogger(__name__)
 # --------------------------------------------------------------------------- #
 
 _RouteTarget = Literal[
-    "financial_agent", "document_agent", "news_agent", "risk_analyst", "__end__"
+    "data_gather_agent", "document_agent", "risk_analyst", "__end__"
 ]
 
 
@@ -60,9 +62,8 @@ def build_graph() -> StateGraph:
 
     # Register nodes
     builder.add_node("supervisor", supervisor_node)
-    builder.add_node("financial_agent", financial_node)
+    builder.add_node("data_gather_agent", parallel_data_node)  # financial + news concurrently
     builder.add_node("document_agent", document_node)
-    builder.add_node("news_agent", news_node)
     builder.add_node("risk_analyst", risk_analyst_node)
 
     # Entry point: always hit supervisor first
@@ -73,18 +74,16 @@ def build_graph() -> StateGraph:
         "supervisor",
         _route,
         {
-            "financial_agent": "financial_agent",
+            "data_gather_agent": "data_gather_agent",
             "document_agent": "document_agent",
-            "news_agent": "news_agent",
             "risk_analyst": "risk_analyst",
             "__end__": END,
         },
     )
 
     # All workers return to supervisor after completing their task
-    builder.add_edge("financial_agent", "supervisor")
+    builder.add_edge("data_gather_agent", "supervisor")
     builder.add_edge("document_agent", "supervisor")
-    builder.add_edge("news_agent", "supervisor")
     builder.add_edge("risk_analyst", "supervisor")  # supervisor sees report → routes to END
 
     return builder.compile()
@@ -99,11 +98,16 @@ graph = build_graph()
 # CLI entry point
 # --------------------------------------------------------------------------- #
 
-def _make_initial_state(ticker: str, pdf_path: str | None = None) -> AgentState:
+def _make_initial_state(
+    ticker: str,
+    pdf_path: str | None = None,
+    use_quarterly: bool = False,
+) -> AgentState:
     return {
         "messages": [HumanMessage(content=f"Analisis risiko keuangan perusahaan {ticker}")],
         "ticker": ticker,
         "pdf_path": pdf_path,
+        "use_quarterly": use_quarterly,
         "financials": None,
         "doc_chunks": None,      # None = not yet fetched (sentinel)
         "news_headlines": None,  # None = not yet fetched (sentinel)

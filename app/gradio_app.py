@@ -42,11 +42,12 @@ _SEV_STYLE: dict[str, tuple[str, str, str]] = {
 }
 
 _AGENT_ICONS: dict[str, str] = {
-    "financial_agent": "📊",
-    "news_agent":      "📰",
-    "document_agent":  "📄",
-    "risk_analyst":    "🧠",
-    "supervisor":      "🎯",
+    "financial_agent":  "📊",
+    "news_agent":       "📰",
+    "data_gather_agent": "⚡",   # parallel fetch (financial + news)
+    "document_agent":   "📄",
+    "risk_analyst":     "🧠",
+    "supervisor":       "🎯",
 }
 
 # ─── Ratio groups (key, display-label, format, sector-scope) ─────────────────
@@ -397,6 +398,122 @@ def _format_positives(report: dict, financials: dict | None = None) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Export helper — plain Markdown suitable for saving / sharing
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _format_export_md(
+    report: dict, ticker: str, financials: dict | None = None
+) -> str:
+    """Render the RiskReport as a self-contained Markdown string for download."""
+    now_str = datetime.now().strftime("%d %b %Y %H:%M")
+    risk_val = (report.get("overall_risk") or "moderate").upper()
+    company = report.get("company_name") or ticker
+    period_end = (financials or {}).get("period_end") or ""
+    prior_period_end = (financials or {}).get("prior_period_end") or ""
+    currency = (financials or {}).get("currency") or ""
+    sector = (financials or {}).get("sector", "general")
+    sector_label = "Perbankan / Keuangan" if sector == "financial" else "Korporat Umum"
+
+    lines: list[str] = [
+        f"# Laporan Risiko: {company} ({ticker.upper()})",
+        f"**Level Risiko:** {risk_val}  ",
+        f"**Sektor:** {sector_label}  ",
+        f"**Mata uang:** {currency or '—'}  ",
+        f"**Periode data:** {period_end or '—'} (laporan tahunan)  ",
+        f"**Dibuat:** {now_str} oleh Indonesian Financial Research Agent",
+        "",
+        "---",
+        "",
+        "## Ringkasan Eksekutif",
+        "",
+        (report.get("summary") or "*Tidak tersedia.*"),
+        "",
+        "---",
+        "",
+    ]
+
+    # Flags
+    flags = report.get("flags") or []
+    lines.append(f"## ⚠️ Flag Risiko ({len(flags)} ditemukan)")
+    lines.append("")
+    if flags:
+        for f in flags:
+            sev = (f.get("severity") or "moderate").upper()
+            cat = f.get("category", "").replace("_", " ").title()
+            finding = f.get("finding", "")
+            evidence = f.get("evidence", "")
+            source = f.get("source", "")
+            period_badge = f" · FY {period_end}" if period_end and "yfinance" in source else ""
+            lines += [
+                f"### [{sev}] {cat}",
+                f"**Temuan:** {finding}",
+                f"**Bukti:** `{evidence}`{period_badge} · {source}",
+                "",
+            ]
+    else:
+        lines += ["*Tidak ada flag risiko yang teridentifikasi.*", ""]
+
+    lines += ["---", "", "## Rasio Keuangan", ""]
+    if period_end:
+        lines.append(f"> Data per: **{period_end}** (Annual Report)")
+    if prior_period_end:
+        lines.append(f"> Pertumbuhan YoY: **{prior_period_end} → {period_end}**")
+    lines.append("")
+
+    ratios = report.get("key_ratios") or {}
+    lines.append("| Metrik | Nilai |")
+    lines.append("|---|---:|")
+    ratio_labels = {
+        "current_ratio": "Current Ratio",
+        "quick_ratio": "Quick Ratio",
+        "debt_to_equity": "Debt-to-Equity (DER)",
+        "debt_ratio": "Debt Ratio",
+        "interest_coverage": "Interest Coverage",
+        "net_profit_margin": "Net Profit Margin",
+        "gross_margin": "Gross Margin",
+        "roe": "ROE",
+        "roa": "ROA",
+        "revenue_growth": "Revenue Growth YoY",
+        "net_income_growth": "Net Income Growth YoY",
+    }
+    for key, label in ratio_labels.items():
+        val = ratios.get(key)
+        if val is not None:
+            fmt_val = f"{val:.1%}" if key in (
+                "net_profit_margin", "gross_margin", "roe", "roa",
+                "revenue_growth", "net_income_growth"
+            ) else f"{val:.2f}"
+            lines.append(f"| {label} | {fmt_val} |")
+    lines += ["", "---", "", "## Faktor Positif", ""]
+    positives = report.get("positives") or []
+    if positives:
+        lines += [f"- {p}" for p in positives]
+    else:
+        lines.append("*Tidak ada catatan positif eksplisit.*")
+
+    lines += ["", "---", "", "## Sumber Data", ""]
+    sources = report.get("sources") or []
+    fy_tag = f" (FY {period_end})" if period_end else ""
+    src_desc = {
+        "yfinance": f"Laporan keuangan tahunan{fy_tag} via yfinance",
+        "news_search": f"Pencarian berita terkini (diambil: {now_str})",
+        "financial_report_pdf": "Laporan keuangan PDF (upload manual)",
+    }
+    for s in sources:
+        desc = next((v for k, v in src_desc.items() if k in s.lower()), s)
+        lines.append(f"- {desc}")
+
+    lines += [
+        "",
+        "---",
+        "",
+        "> ⚠️ *Laporan ini dibuat secara otomatis oleh Indonesian Financial Research Agent.*",
+        "> *Bukan saran investasi. Verifikasi data ke sumber resmi sebelum mengambil keputusan.*",
+    ]
+    return "\n".join(lines)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Core analysis function (streaming generator)
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -419,11 +536,12 @@ def _pdf_path(pdf_file) -> str | None:
 def analyze(
     ticker: str,
     pdf_file,
-) -> Generator[tuple[str, str, str, str, str], None, None]:
+    use_quarterly: bool = False,
+) -> Generator[tuple[str, str, str, str, str, str | None], None, None]:
     """Stream agent progress to a dedicated log panel, then yield the full report.
 
-    Yields 5-tuples: (progress_log, summary, ratios, flags, positives).
-    During streaming only progress_log is updated; the 4 report tabs fill at end.
+    Yields 6-tuples: (progress_log, summary, ratios, flags, positives, export_file).
+    During streaming only progress_log is updated; the 5 report outputs fill at end.
     """
     from langchain_core.messages import HumanMessage
 
@@ -432,7 +550,7 @@ def analyze(
     if not ticker:
         yield (
             "❌ Masukkan kode saham BEI (contoh: BBRI).",
-            _EMPTY, _EMPTY, _EMPTY, _EMPTY,
+            _EMPTY, _EMPTY, _EMPTY, _EMPTY, None,
         )
         return
 
@@ -445,6 +563,7 @@ def analyze(
         "messages": [HumanMessage(content=f"Analisis risiko keuangan perusahaan {ticker}")],
         "ticker":        ticker,
         "pdf_path":      pdf_path,
+        "use_quarterly": use_quarterly,
         "financials":    None,
         "doc_chunks":    None,   # None = not yet fetched (sentinel)
         "news_headlines": None,  # None = not yet fetched (sentinel)
@@ -465,17 +584,19 @@ def analyze(
         "*⏳ Menganalisis... hasil akan tampil setelah semua agen selesai.*"
     )
 
-    def _yield_progress() -> tuple[str, str, str, str, str]:
-        return (_get_log(), _LOADING_SUMMARY, _EMPTY, _EMPTY, _EMPTY)
+    mode_label = "kuartalan" if use_quarterly else "tahunan"
+
+    def _yield_progress() -> tuple:
+        return (_get_log(), _LOADING_SUMMARY, _EMPTY, _EMPTY, _EMPTY, None)
 
     ts = datetime.now().strftime("%H:%M:%S")
-    _log(f"**{ts}** — Memulai analisis **{ticker}**"
+    _log(f"**{ts}** — Memulai analisis **{ticker}** [{mode_label}]"
          + (f" dengan PDF `{Path(pdf_path).name}`" if pdf_path else "") + " ...")
     yield _yield_progress()
 
     # ── lazy graph import (keeps startup fast) ────────────────────────────────
     try:
-        from src.agents.graph import graph
+        from src.agents.graph import graph  # noqa: import inside generator is fine
     except Exception as exc:
         _log(f"❌ Gagal memuat agent graph: `{exc}`")
         yield _yield_progress()
@@ -517,7 +638,7 @@ def analyze(
             "❌ Laporan risiko tidak berhasil dibuat. "
             "Pastikan GROQ_API_KEY atau GOOGLE_API_KEY sudah dikonfigurasi."
         )
-        yield (_get_log(), _EMPTY, _EMPTY, _EMPTY, _EMPTY)
+        yield (_get_log(), _EMPTY, _EMPTY, _EMPTY, _EMPTY, None)
         return
 
     ts2 = datetime.now().strftime("%H:%M:%S")
@@ -555,7 +676,22 @@ def analyze(
     except Exception as exc:
         positives_md = f"*(rendering error: {exc})*"
 
-    yield (_get_log(), summary_md, ratios_md, flags_md, positives_md)
+    # ── generate Markdown export file ─────────────────────────────────────────
+    export_path: str | None = None
+    try:
+        import tempfile
+        export_content = _format_export_md(report, ticker, financials)
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".md",
+            prefix=f"risk_{ticker}_",
+            delete=False, encoding="utf-8",
+        ) as f:
+            f.write(export_content)
+            export_path = f.name
+    except Exception:
+        pass  # export failure is non-critical
+
+    yield (_get_log(), summary_md, ratios_md, flags_md, positives_md, export_path)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -614,6 +750,11 @@ def build_demo() -> gr.Blocks:
                     label="📄 Laporan Keuangan PDF (Opsional)",
                     file_types=[".pdf"],
                     file_count="single",
+                )
+                quarterly_toggle = gr.Checkbox(
+                    label="📅 Gunakan data kuartalan (quarterly)",
+                    value=False,
+                    info="Default: laporan tahunan (annual). Centang untuk data kuartal terbaru.",
                 )
                 gr.Markdown(
                     "*ℹ️ PDF parsing membutuhkan Docling — "
@@ -681,17 +822,25 @@ def build_demo() -> gr.Blocks:
                             elem_classes=["output-md"],
                         )
 
-        _outputs = [progress_md, summary_out, ratios_out, flags_out, positives_out]
+                gr.Markdown("---")
+                export_out = gr.File(
+                    label="📥 Download Laporan (.md)",
+                    file_count="single",
+                    interactive=False,
+                )
+
+        _inputs = [ticker_input, pdf_input, quarterly_toggle]
+        _outputs = [progress_md, summary_out, ratios_out, flags_out, positives_out, export_out]
 
         analyze_btn.click(
             fn=analyze,
-            inputs=[ticker_input, pdf_input],
+            inputs=_inputs,
             outputs=_outputs,
             show_progress="minimal",
         )
         ticker_input.submit(
             fn=analyze,
-            inputs=[ticker_input, pdf_input],
+            inputs=_inputs,
             outputs=_outputs,
             show_progress="hidden",
         )

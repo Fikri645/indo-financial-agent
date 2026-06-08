@@ -169,7 +169,10 @@ class DocumentStore:
         if self._vectorstore is not None or not self._chunks:
             return
         from langchain_chroma import Chroma
-        from langchain_community.embeddings import HuggingFaceEmbeddings
+        try:
+            from langchain_huggingface import HuggingFaceEmbeddings
+        except ImportError:
+            from langchain_community.embeddings import HuggingFaceEmbeddings  # noqa: deprecated
 
         embeddings = HuggingFaceEmbeddings(model_name=config.EMBEDDING_MODEL)
         texts = [c.text for c in self._chunks]

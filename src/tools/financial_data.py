@@ -7,12 +7,20 @@ the qualitative leg, and news.py provides market context.
 from __future__ import annotations
 
 import math
-from typing import Optional
+import time
+from typing import Optional, Tuple
 
 import pandas as pd
 
 from src import config
 from src.schemas import CompanyFinancials, FinancialRatios
+
+# ---------------------------------------------------------------------------
+# Simple in-memory TTL cache for fetched financials (avoids re-hitting
+# yfinance on repeated analysis of the same ticker within a session).
+# ---------------------------------------------------------------------------
+_CACHE: dict[str, Tuple[CompanyFinancials, float]] = {}
+_CACHE_TTL: float = 600.0  # 10 minutes
 
 
 # yfinance row labels are not perfectly stable; we try a list of aliases per item.
@@ -77,16 +85,26 @@ def classify_sector(sector: Optional[str], industry: Optional[str]) -> str:
     return "general"
 
 
-def _growth(df: Optional[pd.DataFrame], aliases: list[str]) -> Optional[float]:
-    """YoY growth using the two newest columns (col 0 = latest, col 1 = prior)."""
+def _growth(
+    df: Optional[pd.DataFrame], aliases: list[str], prior_col: int = 1
+) -> Optional[float]:
+    """YoY growth between col 0 (latest) and ``prior_col``.
+
+    Annual:    prior_col=1  (prior fiscal year)
+    Quarterly: prior_col=4  (same quarter prior year — avoids seasonal noise)
+    """
     latest = _first_row(df, aliases, 0)
-    prior = _first_row(df, aliases, 1)
+    prior = _first_row(df, aliases, prior_col)
     if latest is None or prior is None or prior == 0:
         return None
     return round((latest - prior) / abs(prior), 4)
 
 
-def compute_ratios(balance_sheet: pd.DataFrame, income_stmt: pd.DataFrame) -> FinancialRatios:
+def compute_ratios(
+    balance_sheet: pd.DataFrame,
+    income_stmt: pd.DataFrame,
+    use_quarterly: bool = False,
+) -> FinancialRatios:
     """Derive the standard liquidity / leverage / profitability / growth ratios."""
     # Balance-sheet items (latest period)
     cur_assets = _first_row(balance_sheet, _BS_ALIASES["current_assets"])
@@ -104,6 +122,8 @@ def compute_ratios(balance_sheet: pd.DataFrame, income_stmt: pd.DataFrame) -> Fi
     net_income = _first_row(income_stmt, _IS_ALIASES["net_income"])
 
     quick_assets = (cur_assets - inventory) if cur_assets is not None else None
+    # Quarterly: compare same quarter prior year (col 4) to avoid seasonal noise.
+    prior_col = 4 if use_quarterly else 1
 
     return FinancialRatios(
         current_ratio=_safe_div(cur_assets, cur_liab),
@@ -115,22 +135,35 @@ def compute_ratios(balance_sheet: pd.DataFrame, income_stmt: pd.DataFrame) -> Fi
         gross_margin=_safe_div(gross, revenue),
         roe=_safe_div(net_income, total_equity),
         roa=_safe_div(net_income, total_assets),
-        revenue_growth=_growth(income_stmt, _IS_ALIASES["total_revenue"]),
-        net_income_growth=_growth(income_stmt, _IS_ALIASES["net_income"]),
+        revenue_growth=_growth(income_stmt, _IS_ALIASES["total_revenue"], prior_col),
+        net_income_growth=_growth(income_stmt, _IS_ALIASES["net_income"], prior_col),
     )
 
 
-def fetch_financials(ticker: str) -> CompanyFinancials:
+def fetch_financials(ticker: str, use_quarterly: bool = False) -> CompanyFinancials:
     """Fetch fundamentals for an IDX-listed company and compute risk ratios.
+
+    Results are cached in-process for ``_CACHE_TTL`` seconds to avoid
+    redundant yfinance round-trips when the same ticker is analysed repeatedly.
 
     Parameters
     ----------
     ticker : str
         IDX ticker, with or without the ``.JK`` suffix (e.g. ``BBRI`` or ``BBRI.JK``).
+    use_quarterly : bool
+        When True, use the most recent quarterly statements instead of annual.
+        Growth ratios compare the same quarter in the prior year (YoY, not QoQ).
     """
     import yfinance as yf  # local import: keeps module import cheap/testable
 
     symbol = config.normalize_ticker(ticker)
+    cache_key = f"{symbol}:{'q' if use_quarterly else 'a'}"
+    now = time.monotonic()
+    if cache_key in _CACHE:
+        cached, ts = _CACHE[cache_key]
+        if now - ts < _CACHE_TTL:
+            return cached
+
     tk = yf.Ticker(symbol)
 
     notes: list[str] = []
@@ -140,26 +173,33 @@ def fetch_financials(ticker: str) -> CompanyFinancials:
         info = {}
         notes.append("Could not fetch company info from Yahoo Finance.")
 
-    balance_sheet = _safe_statement(tk, "balance_sheet", notes)
-    income_stmt = _safe_statement(tk, "income_stmt", notes)
+    if use_quarterly:
+        balance_sheet = _safe_statement(tk, "quarterly_balance_sheet", notes)
+        income_stmt = _safe_statement(tk, "quarterly_income_stmt", notes)
+    else:
+        balance_sheet = _safe_statement(tk, "balance_sheet", notes)
+        income_stmt = _safe_statement(tk, "income_stmt", notes)
 
-    ratios = compute_ratios(balance_sheet, income_stmt)
+    ratios = compute_ratios(balance_sheet, income_stmt, use_quarterly)
 
+    # period_end  = latest period (col 0)
+    # prior_period_end = comparison period for growth (col 1 annual, col 4 quarterly)
     period_end = None
     prior_period_end = None
+    prior_col = 4 if use_quarterly else 1
     if balance_sheet is not None and not balance_sheet.empty:
         period_end = str(balance_sheet.columns[0].date()) if hasattr(
             balance_sheet.columns[0], "date"
         ) else str(balance_sheet.columns[0])
-        if balance_sheet.shape[1] > 1:
-            prior_period_end = str(balance_sheet.columns[1].date()) if hasattr(
-                balance_sheet.columns[1], "date"
-            ) else str(balance_sheet.columns[1])
+        if balance_sheet.shape[1] > prior_col:
+            prior_period_end = str(balance_sheet.columns[prior_col].date()) if hasattr(
+                balance_sheet.columns[prior_col], "date"
+            ) else str(balance_sheet.columns[prior_col])
 
     raw_sector = info.get("sector")
     raw_industry = info.get("industry")
 
-    return CompanyFinancials(
+    result = CompanyFinancials(
         ticker=symbol,
         company_name=info.get("longName") or info.get("shortName"),
         currency=info.get("financialCurrency") or info.get("currency"),
@@ -175,6 +215,8 @@ def fetch_financials(ticker: str) -> CompanyFinancials:
         total_equity=_first_row(balance_sheet, _BS_ALIASES["total_equity"]),
         notes=notes,
     )
+    _CACHE[cache_key] = (result, time.monotonic())
+    return result
 
 
 def _safe_statement(tk, attr: str, notes: list[str]) -> Optional[pd.DataFrame]:

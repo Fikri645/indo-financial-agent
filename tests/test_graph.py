@@ -19,6 +19,7 @@ from src.agents.nodes import (  # noqa: E402 — after importorskip guard
     financial_node,
     news_node,
     document_node,
+    parallel_data_node,
     supervisor_node,
     risk_analyst_node,
 )
@@ -40,6 +41,7 @@ def _base_state(**overrides):
         "messages": [],
         "ticker": "BBRI",
         "pdf_path": None,
+        "use_quarterly": False,
         "financials": None,
         "doc_chunks": None,      # None = not yet fetched
         "news_headlines": None,  # None = not yet fetched
@@ -93,15 +95,31 @@ def _fake_risk_report(ticker="BBRI") -> RiskReport:
 # ============================================================================ #
 
 class TestSupervisorNode:
-    def test_routes_to_financial_when_nothing_gathered(self):
+    def test_routes_to_data_gather_when_nothing_gathered(self):
+        # Neither financials nor news → data_gather_agent fetches both concurrently
         result = supervisor_node(_base_state())
-        assert result["next"] == "financial_agent"
+        assert result["next"] == "data_gather_agent"
 
-    def test_routes_to_news_after_financial(self):
-        # news_headlines=None → not fetched yet → should go to news_agent
+    def test_routes_to_data_gather_when_only_news_missing(self):
+        # financials done but news still None → still needs data_gather
         state = _base_state(financials={"ticker": "BBRI.JK"}, news_headlines=None)
         result = supervisor_node(state)
-        assert result["next"] == "news_agent"
+        assert result["next"] == "data_gather_agent"
+
+    def test_routes_to_data_gather_when_only_financials_missing(self):
+        # news done but financials still None → still needs data_gather
+        state = _base_state(financials=None, news_headlines=["headline 1"])
+        result = supervisor_node(state)
+        assert result["next"] == "data_gather_agent"
+
+    def test_routes_to_risk_analyst_when_both_data_ready_no_pdf(self):
+        state = _base_state(
+            financials={"ticker": "BBRI.JK"},
+            news_headlines=["headline 1"],
+            pdf_path=None,         # no PDF → doc considered done
+        )
+        result = supervisor_node(state)
+        assert result["next"] == "risk_analyst"
 
     def test_routes_to_risk_analyst_when_news_empty_no_pdf(self):
         # news_headlines=[] → fetched but 0 results → treated as done
@@ -109,15 +127,6 @@ class TestSupervisorNode:
             financials={"ticker": "BBRI.JK"},
             news_headlines=[],     # fetched, empty result — still done
             pdf_path=None,
-        )
-        result = supervisor_node(state)
-        assert result["next"] == "risk_analyst"
-
-    def test_routes_to_risk_analyst_when_all_data_ready_no_pdf(self):
-        state = _base_state(
-            financials={"ticker": "BBRI.JK"},
-            news_headlines=["headline 1"],
-            pdf_path=None,         # no PDF → doc considered done
         )
         result = supervisor_node(state)
         assert result["next"] == "risk_analyst"
@@ -163,6 +172,64 @@ class TestSupervisorNode:
         )
         result = supervisor_node(state)
         assert result["next"] == "__end__"
+
+
+# ============================================================================ #
+# parallel_data_node
+# ============================================================================ #
+
+class TestParallelDataNode:
+    def test_populates_both_financials_and_news(self):
+        fake = _fake_financials()
+        from langchain_core.messages import AIMessage as _AI
+        fake_news_agent = MagicMock()
+        fake_news_agent.invoke.return_value = {"messages": [_AI(content="Sentimen positif.")]}
+
+        with (
+            patch("src.tools.financial_data.fetch_financials", return_value=fake),
+            patch("langgraph.prebuilt.create_react_agent", return_value=fake_news_agent),
+            patch("src.agents.llm.get_llm", return_value=MagicMock()),
+        ):
+            result = parallel_data_node(_base_state())
+
+        assert result["financials"] is not None
+        assert result["news_headlines"] is not None
+        assert len(result["messages"]) == 2  # one from each agent
+
+    def test_financial_failure_does_not_block_news(self):
+        """Even if yfinance fails, news should still run."""
+        from langchain_core.messages import AIMessage as _AI
+        fake_news_agent = MagicMock()
+        fake_news_agent.invoke.return_value = {"messages": [_AI(content="Berita terkini.")]}
+
+        with (
+            patch("src.tools.financial_data.fetch_financials", side_effect=RuntimeError("down")),
+            patch("langgraph.prebuilt.create_react_agent", return_value=fake_news_agent),
+            patch("src.agents.llm.get_llm", return_value=MagicMock()),
+        ):
+            result = parallel_data_node(_base_state())
+
+        assert result["financials"] is None          # graceful failure
+        assert result["news_headlines"] is not None  # news still ran
+        assert len(result["messages"]) == 2
+
+    def test_messages_preserve_agent_names(self):
+        """Messages returned by parallel_data_node keep their original agent names."""
+        fake = _fake_financials()
+        from langchain_core.messages import AIMessage as _AI
+        fake_news_agent = MagicMock()
+        fake_news_agent.invoke.return_value = {"messages": [_AI(content="News OK.")]}
+
+        with (
+            patch("src.tools.financial_data.fetch_financials", return_value=fake),
+            patch("langgraph.prebuilt.create_react_agent", return_value=fake_news_agent),
+            patch("src.agents.llm.get_llm", return_value=MagicMock()),
+        ):
+            result = parallel_data_node(_base_state())
+
+        names = {msg.name for msg in result["messages"]}
+        assert "financial_agent" in names
+        assert "news_agent" in names
 
 
 # ============================================================================ #

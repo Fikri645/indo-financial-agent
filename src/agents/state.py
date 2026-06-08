@@ -20,6 +20,7 @@ class AgentState(TypedDict):
     # ---- task inputs -------------------------------------------------------- #
     ticker: str          # IDX ticker, e.g. "BBRI" or "BBRI.JK"
     pdf_path: Optional[str]  # optional path to the annual-report PDF
+    use_quarterly: bool  # True → use quarterly statements; False → annual (default)
 
     # ---- evidence collected by worker nodes --------------------------------- #
     # None  = worker has NOT run yet  (supervisor will dispatch it)
