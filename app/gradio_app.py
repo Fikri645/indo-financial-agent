@@ -550,7 +550,7 @@ def analyze(
     if not ticker:
         yield (
             "❌ Masukkan kode saham BEI (contoh: BBRI).",
-            _EMPTY, _EMPTY, _EMPTY, _EMPTY, None,
+            _EMPTY, _EMPTY, _EMPTY, _EMPTY, gr.update(visible=False),
         )
         return
 
@@ -587,7 +587,7 @@ def analyze(
     mode_label = "kuartalan" if use_quarterly else "tahunan"
 
     def _yield_progress() -> tuple:
-        return (_get_log(), _LOADING_SUMMARY, _EMPTY, _EMPTY, _EMPTY, None)
+        return (_get_log(), _LOADING_SUMMARY, _EMPTY, _EMPTY, _EMPTY, gr.update(visible=False))
 
     ts = datetime.now().strftime("%H:%M:%S")
     _log(f"**{ts}** — Memulai analisis **{ticker}** [{mode_label}]"
@@ -638,7 +638,7 @@ def analyze(
             "❌ Laporan risiko tidak berhasil dibuat. "
             "Pastikan GROQ_API_KEY atau GOOGLE_API_KEY sudah dikonfigurasi."
         )
-        yield (_get_log(), _EMPTY, _EMPTY, _EMPTY, _EMPTY, None)
+        yield (_get_log(), _EMPTY, _EMPTY, _EMPTY, _EMPTY, gr.update(visible=False))
         return
 
     ts2 = datetime.now().strftime("%H:%M:%S")
@@ -691,7 +691,11 @@ def analyze(
     except Exception:
         pass  # export failure is non-critical
 
-    yield (_get_log(), summary_md, ratios_md, flags_md, positives_md, export_path)
+    export_update = (
+        gr.update(value=export_path, visible=True)
+        if export_path else gr.update(visible=False)
+    )
+    yield (_get_log(), summary_md, ratios_md, flags_md, positives_md, export_update)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -755,6 +759,7 @@ def build_demo() -> gr.Blocks:
                     label="📅 Gunakan data kuartalan (quarterly)",
                     value=False,
                     info="Default: laporan tahunan (annual). Centang untuk data kuartal terbaru.",
+                    container=False,
                 )
                 gr.Markdown(
                     "*ℹ️ PDF parsing membutuhkan Docling — "
@@ -822,11 +827,11 @@ def build_demo() -> gr.Blocks:
                             elem_classes=["output-md"],
                         )
 
-                gr.Markdown("---")
                 export_out = gr.File(
                     label="📥 Download Laporan (.md)",
                     file_count="single",
                     interactive=False,
+                    visible=False,  # hidden until analysis produces a file
                 )
 
         _inputs = [ticker_input, pdf_input, quarterly_toggle]
