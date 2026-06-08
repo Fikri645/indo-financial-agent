@@ -6,7 +6,6 @@ Covers: _safe_div, _first_row, _growth, compute_ratios, classify_sector,
 """
 from __future__ import annotations
 
-import math
 import sys
 import time
 from unittest.mock import MagicMock, patch
@@ -48,8 +47,12 @@ def _make_balance_sheet() -> pd.DataFrame:
         "Inventory",
     ]
     data = {
-        pd.Timestamp("2024-12-31"): [1_000_000.0, 600_000.0, 400_000.0, 300_000.0, 200_000.0, 50_000.0],
-        pd.Timestamp("2023-12-31"): [900_000.0, 540_000.0, 360_000.0, 270_000.0, 180_000.0, 45_000.0],
+        pd.Timestamp("2024-12-31"): [
+            1_000_000.0, 600_000.0, 400_000.0, 300_000.0, 200_000.0, 50_000.0
+        ],
+        pd.Timestamp("2023-12-31"): [
+            900_000.0, 540_000.0, 360_000.0, 270_000.0, 180_000.0, 45_000.0
+        ],
     }
     return pd.DataFrame(data, index=items)
 
@@ -143,7 +146,6 @@ class TestFirstRow:
         assert _first_row(bs, ["Total Assets"], col_idx=5) is None
 
     def test_nan_value_skipped_tries_next_alias(self):
-        import numpy as np
         items = ["Row A", "Row B"]
         data = {pd.Timestamp("2024-12-31"): [float("nan"), 42.0]}
         df = pd.DataFrame(data, index=items)
@@ -293,7 +295,9 @@ def _make_mock_ticker(bs=None, is_=None, quarterly_bs=None, quarterly_is=None, i
     tk.balance_sheet = bs if bs is not None else _make_balance_sheet()
     tk.income_stmt = is_ if is_ is not None else _make_income_stmt()
     tk.quarterly_balance_sheet = quarterly_bs if quarterly_bs is not None else _make_balance_sheet()
-    tk.quarterly_income_stmt = quarterly_is if quarterly_is is not None else _make_quarterly_income_stmt()
+    tk.quarterly_income_stmt = (
+        quarterly_is if quarterly_is is not None else _make_quarterly_income_stmt()
+    )
     return tk
 
 

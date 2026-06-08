@@ -61,7 +61,9 @@ class CompanyFinancials(BaseModel):
     sector: Optional[str] = Field(None, description="Coarse sector: financial | general")
     industry: Optional[str] = Field(None, description="Raw yfinance industry label")
     period_end: Optional[str] = Field(None, description="Latest annual period end (ISO date)")
-    prior_period_end: Optional[str] = Field(None, description="Prior annual period end (ISO date) — used for YoY growth label")
+    prior_period_end: Optional[str] = Field(
+        None, description="Prior annual period end (ISO date) — used for YoY growth label"
+    )
     ratios: FinancialRatios = Field(default_factory=FinancialRatios)
     # Raw headline figures (latest period), in reporting currency
     total_revenue: Optional[float] = None

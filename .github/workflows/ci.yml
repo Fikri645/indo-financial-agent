@@ -2,20 +2,31 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, master]
   pull_request:
-    branches: [main]
+    branches: [main, master]
 
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11"]
+
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ matrix.python-version }}
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: ${{ runner.os }}-pip-
 
       - name: Install test dependencies
         run: |
@@ -23,11 +34,19 @@ jobs:
           # Lightweight deps only — the offline test suite doesn't need the heavy
           # ML stack (docling, sentence-transformers, chromadb). langchain-core is
           # pure-python and needed by the eval-harness tests.
-          pip install pydantic pandas numpy rank-bm25 python-dotenv pytest flake8 \
-                      langchain-core
+          pip install pydantic pandas numpy rank-bm25 python-dotenv \
+                      langchain-core pytest pytest-cov flake8
 
-      - name: Lint
-        run: flake8 src/ tests/ scripts/ eval/
+      - name: Lint (flake8)
+        run: flake8 src/ tests/ scripts/ eval/ app/ --count
 
-      - name: Run tests
-        run: python -m pytest tests/ -v
+      - name: Run unit tests
+        run: |
+          python -m pytest tests/ -v --tb=short \
+            --cov=src --cov-report=xml
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./coverage.xml
+          fail_ci_if_error: false
