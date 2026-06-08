@@ -101,11 +101,20 @@ _CSS = """
 /* Thinner divider */
 hr { margin: 12px 0 !important; opacity: 0.3; }
 
-/* Quarterly checkbox — remove Gradio block background/border */
-#quarterly-cb { background: transparent !important;
-                border: none !important;
-                box-shadow: none !important;
-                padding: 2px 0 !important; }
+/* Quarterly checkbox — remove Gradio block background/border.
+   container=False removes the outer wrapper; CSS overrides handle Svelte internals. */
+#quarterly-cb,
+#quarterly-cb > .wrap,
+#quarterly-cb > div {
+    background: transparent !important;
+    background-color: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    padding: 4px 0 !important;
+}
+
+/* Download button — hidden before analysis (no file yet) */
+#download-btn { margin-top: 8px; }
 """
 
 
@@ -554,7 +563,7 @@ def analyze(
     # ── input validation ──────────────────────────────────────────────────────
     ticker = (ticker or "").strip().upper()
     if not ticker:
-        yield ("❌ Masukkan kode saham BEI (contoh: BBRI).", _EMPTY, _EMPTY, _EMPTY, _EMPTY, None)
+        yield ("❌ Masukkan kode saham BEI (contoh: BBRI).", _EMPTY, _EMPTY, _EMPTY, _EMPTY, gr.update())
         return
 
     pdf_path = _pdf_path(pdf_file)
@@ -590,7 +599,8 @@ def analyze(
     mode_label = "kuartalan" if use_quarterly else "tahunan"
 
     def _yield_progress() -> tuple:
-        return (_get_log(), _LOADING_SUMMARY, _EMPTY, _EMPTY, _EMPTY, None)
+        # gr.update() with no args = no-op: don't change the download button state.
+        return (_get_log(), _LOADING_SUMMARY, _EMPTY, _EMPTY, _EMPTY, gr.update())
 
     ts = datetime.now().strftime("%H:%M:%S")
     _log(f"**{ts}** — Memulai analisis **{ticker}** [{mode_label}]"
@@ -641,7 +651,7 @@ def analyze(
             "❌ Laporan risiko tidak berhasil dibuat. "
             "Pastikan GROQ_API_KEY atau GOOGLE_API_KEY sudah dikonfigurasi."
         )
-        yield (_get_log(), _EMPTY, _EMPTY, _EMPTY, _EMPTY, None)
+        yield (_get_log(), _EMPTY, _EMPTY, _EMPTY, _EMPTY, gr.update())
         return
 
     ts2 = datetime.now().strftime("%H:%M:%S")
@@ -694,7 +704,13 @@ def analyze(
     except Exception:
         pass  # export failure is non-critical
 
-    yield (_get_log(), summary_md, ratios_md, flags_md, positives_md, export_path)
+    # Show the download button only when a file was successfully created.
+    export_update = (
+        gr.update(visible=True, value=export_path)
+        if export_path
+        else gr.update()
+    )
+    yield (_get_log(), summary_md, ratios_md, flags_md, positives_md, export_update)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -759,6 +775,7 @@ def build_demo() -> gr.Blocks:
                     value=False,
                     info="Default: laporan tahunan (annual). Centang untuk data kuartal terbaru.",
                     elem_id="quarterly-cb",
+                    container=False,
                 )
                 gr.Markdown(
                     "*ℹ️ PDF parsing membutuhkan Docling — "
@@ -831,7 +848,8 @@ def build_demo() -> gr.Blocks:
                     value=None,
                     variant="secondary",
                     size="sm",
-                    visible=True,
+                    visible=False,
+                    elem_id="download-btn",
                 )
 
         _inputs = [ticker_input, pdf_input, quarterly_toggle]
